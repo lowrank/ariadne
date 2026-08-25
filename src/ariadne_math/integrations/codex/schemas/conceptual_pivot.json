@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ariadne conceptual-pivot response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["new_representations", "needs_human", "human_question"],
+  "properties": {
+    "new_representations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "difference", "decisive_test"],
+        "properties": {
+          "title": {"type": "string"},
+          "difference": {"type": "string"},
+          "decisive_test": {"type": "string"}
+        }
+      }
+    },
+    "needs_human": {"type": "boolean"},
+    "human_question": {"type": "string"}
+  }
+}

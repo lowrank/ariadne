@@ -1,0 +1,66 @@
+[budget]
+max_epochs = 3
+max_calls = 30
+max_cost_usd = 1.0
+stagnation_epochs = 2
+duplicate_failure_limit = 2
+
+[mode]
+name = "offline_sentinel"
+offline_agents = 2
+research_agents = 0
+parallel = true
+literature_intervention = true
+require_route_difference_certificate = true
+novelty_deadline_epochs = 1
+allow_experiments = false
+route_similarity_threshold = 0.82
+
+[providers.mock]
+kind = "mock"
+estimated_cost_usd = 0.0
+
+[roles.offline_researcher]
+provider = "mock"
+network_policy = "deny"
+
+[roles.literature_researcher]
+provider = "mock"
+network_policy = "allow"
+
+[roles.contract_author]
+provider = "mock"
+network_policy = "deny"
+
+[roles.literature_author]
+provider = "mock"
+network_policy = "allow"
+
+[roles.intervention_responder]
+provider = "mock"
+network_policy = "deny"
+
+[roles.literature_sentinel]
+provider = "mock"
+network_policy = "allow"
+
+[roles.local_verifier]
+provider = "mock"
+network_policy = "deny"
+
+[roles.global_verifier]
+provider = "mock"
+network_policy = "deny"
+
+[roles.conceptual_pivot]
+provider = "mock"
+network_policy = "deny"
+
+
+[roles.result_synthesizer]
+provider = "mock"
+network_policy = "deny"
+
+[roles.instruction_interpreter]
+provider = "mock"
+network_policy = "deny"

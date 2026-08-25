@@ -1,0 +1,145 @@
+# Codex CLI integration for Ariadne.
+#
+# Prerequisites:
+#   1. Install the Codex CLI.
+#   2. Run: codex login
+#   3. Install this package: pip install -e .
+#   4. Check: codex login status
+#
+# The wrapper launches a fresh `codex exec` process for every bounded role call.
+# All roles use an empty, read-only workspace. Offline research, contract
+# authoring, verification, and conceptual-pivot roles always have web search
+# disabled. Literature author/researcher/sentinel roles receive only the material
+# selected for their role; live search is disabled by default for reproducibility
+# and can be enabled only for these literature-aware roles.
+
+[providers.codex_offline]
+kind = "command"
+command = ["ariadne-codex-provider"]
+timeout_seconds = 0
+estimated_cost_usd = 1.50
+require_os_network_isolation = false
+
+[providers.codex_offline.env]
+ARIADNE_CODEX_WEB_SEARCH = "disabled"
+ARIADNE_CODEX_MODEL = "gpt-5.6-sol"
+ARIADNE_CODEX_REASONING_EFFORT = "xhigh"
+
+[providers.codex_response]
+kind = "command"
+command = ["ariadne-codex-provider"]
+timeout_seconds = 1200
+estimated_cost_usd = 0.75
+require_os_network_isolation = false
+
+[providers.codex_response.env]
+ARIADNE_CODEX_WEB_SEARCH = "disabled"
+ARIADNE_CODEX_MODEL = "gpt-5.6-sol"
+ARIADNE_CODEX_REASONING_EFFORT = "high"
+
+[providers.codex_literature]
+kind = "command"
+command = ["ariadne-codex-provider"]
+timeout_seconds = 0
+estimated_cost_usd = 1.00
+require_os_network_isolation = false
+
+[providers.codex_literature.env]
+ARIADNE_CODEX_WEB_SEARCH = "disabled"
+ARIADNE_CODEX_MODEL = "gpt-5.6-sol"
+ARIADNE_CODEX_REASONING_EFFORT = "high"
+
+# To allow literature-aware roles—not offline researchers or verifiers—to
+# perform live search, replace the preceding value with "live" and keep their
+# role network_policy below as "allow". A frozen local dossier is preferred for
+# repeatability.
+
+[providers.codex_critic]
+kind = "command"
+command = ["ariadne-codex-provider"]
+timeout_seconds = 1800
+estimated_cost_usd = 1.50
+require_os_network_isolation = false
+
+[providers.codex_critic.env]
+ARIADNE_CODEX_WEB_SEARCH = "disabled"
+ARIADNE_CODEX_MODEL = "gpt-5.6-sol"
+ARIADNE_CODEX_REASONING_EFFORT = "xhigh"
+
+[providers.codex_pivot]
+kind = "command"
+command = ["ariadne-codex-provider"]
+timeout_seconds = 1800
+estimated_cost_usd = 2.00
+require_os_network_isolation = false
+
+[providers.codex_pivot.env]
+ARIADNE_CODEX_WEB_SEARCH = "disabled"
+ARIADNE_CODEX_MODEL = "gpt-5.6-sol"
+ARIADNE_CODEX_REASONING_EFFORT = "xhigh"
+
+[roles.offline_researcher]
+provider = "codex_offline"
+network_policy = "deny"
+
+[roles.literature_researcher]
+provider = "codex_literature"
+network_policy = "allow"
+
+[roles.contract_author]
+provider = "codex_offline"
+network_policy = "deny"
+
+[roles.literature_author]
+provider = "codex_literature"
+network_policy = "allow"
+
+[roles.intervention_responder]
+provider = "codex_response"
+network_policy = "deny"
+
+[roles.literature_sentinel]
+provider = "codex_literature"
+network_policy = "allow"
+
+[roles.proof_expander]
+provider = "codex_literature"
+network_policy = "allow"
+
+[roles.local_verifier]
+provider = "codex_critic"
+network_policy = "deny"
+
+[roles.global_verifier]
+provider = "codex_critic"
+network_policy = "deny"
+
+[roles.conceptual_pivot]
+provider = "codex_pivot"
+network_policy = "deny"
+
+[roles.result_synthesizer]
+provider = "codex_pivot"
+network_policy = "deny"
+
+[roles.instruction_interpreter]
+provider = "codex_pivot"
+network_policy = "deny"
+
+[budget]
+max_epochs = 3
+max_calls = 24
+max_cost_usd = 30.0
+stagnation_epochs = 2
+duplicate_failure_limit = 2
+
+[mode]
+name = "literature_guided"
+offline_agents = 0
+research_agents = 2
+parallel = true
+literature_intervention = false
+require_route_difference_certificate = false
+novelty_deadline_epochs = 1
+allow_experiments = false
+route_similarity_threshold = 0.82

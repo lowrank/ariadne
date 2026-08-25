@@ -1,0 +1,45 @@
+{
+  "problem_id": "EXAMPLE-001",
+  "title": "Uniform loss-free estimate",
+  "statement": {
+    "text": "Prove or refute that every admissible object satisfies the stated loss-free estimate with a constant independent of the discretization parameter.",
+    "formal_quantifier_outline": "forall N and admissible X_N, A_N(X_N) <= C B_N(X_N), where C is independent of N"
+  },
+  "domains": {
+    "N": "positive integers",
+    "X_N": "problem-specific admissible class"
+  },
+  "hypotheses": [
+    "all normalization and regularity assumptions are fixed here"
+  ],
+  "conclusion": [
+    "a uniform constant C exists without the classical logarithmic loss"
+  ],
+  "uniformity": {
+    "constants_may_depend_on": [
+      "fixed structural parameters"
+    ],
+    "constants_may_not_depend_on": [
+      "N",
+      "the chosen admissible object"
+    ]
+  },
+  "coefficient_domains": [
+    "real"
+  ],
+  "endpoints": {
+    "included": [
+      "the stated endpoint"
+    ],
+    "excluded": []
+  },
+  "success_criteria": {
+    "proof": "Complete deductive proof of the exact uniform estimate",
+    "refutation": "Exact admissible family for which the uniform estimate fails"
+  },
+  "allowed_conditionals": [],
+  "formalization_policy": {
+    "lean_allowed_only_after_human_checked_proof": true
+  },
+  "research_mode": "offline_sentinel"
+}

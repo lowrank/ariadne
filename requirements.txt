@@ -1,0 +1,12 @@
+# Core runtime dependencies for Ariadne's Python environment.
+prompt_toolkit>=3.0.48
+pypdf>=5.0
+sympy>=1.13
+
+# Optional system integrations (not installed by pip):
+# - Codex CLI: required for Codex-backed campaigns.
+# - pdflatex: required to publish journal-style proof/report .tex notes and PDFs.
+#   Ariadne retains malformed or uncompiled proof bodies only as source artifacts.
+# - pdftotext: optional fallback PDF extractor.
+# - MinerU: optional local PDF-to-Markdown backend; expose its executable with
+#   ARIADNE_MINERU_BIN or put mineru on PATH.

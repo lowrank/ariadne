@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ariadne expanded proof response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["plan", "literature_review", "proof_latex", "open_obligations", "sources"],
+  "properties": {
+    "plan": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "literature_review": {"type": "string"},
+    "proof_latex": {"type": "string", "minLength": 500},
+    "open_obligations": {"type": "array", "items": {"type": "string"}},
+    "sources": {"type": "array", "items": {"type": "string"}}
+  }
+}

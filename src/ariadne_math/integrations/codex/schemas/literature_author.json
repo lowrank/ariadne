@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ariadne literature document author response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document_type",
+    "markdown",
+    "sources",
+    "warnings"
+  ],
+  "properties": {
+    "document_type": {
+      "type": "string",
+      "enum": [
+        "literature_sentinel",
+        "shared_literature_dossier",
+        "parked_literature_dossier"
+      ]
+    },
+    "markdown": {
+      "type": "string"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "citation",
+          "status",
+          "locator"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "citation": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "locator": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ariadne literature-intervention response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision", "reason", "difference_certificate", "proposed_test"],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "ACCEPT_STOP",
+        "REJECT_DIFFERENT_ROUTE",
+        "REJECT_NOT_APPLICABLE",
+        "NEED_HUMAN_REVIEW"
+      ]
+    },
+    "reason": {"type": "string"},
+    "difference_certificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assumptions_difference",
+        "representation_difference",
+        "key_lemma_difference",
+        "outcome_difference",
+        "decisive_test"
+      ],
+      "properties": {
+        "assumptions_difference": {"type": "string"},
+        "representation_difference": {"type": "string"},
+        "key_lemma_difference": {"type": "string"},
+        "outcome_difference": {"type": "string"},
+        "decisive_test": {"type": "string"}
+      }
+    },
+    "proposed_test": {"type": "string"}
+  }
+}

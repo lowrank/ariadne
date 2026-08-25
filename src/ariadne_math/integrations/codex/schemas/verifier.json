@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ariadne proof-audit response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "verdict",
+    "failure_class",
+    "minimal_failed_obligation",
+    "local_repairable",
+    "statement_drift",
+    "recommended_transition",
+    "verified_object",
+    "verified_admissibility",
+    "verified_violation",
+    "verified_source_independence"
+  ],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "REJECT",
+        "UNCERTAIN",
+        "NEEDS_SOURCE_AUDIT",
+        "NEEDS_HUMAN"
+      ]
+    },
+    "failure_class": {
+      "type": "string"
+    },
+    "minimal_failed_obligation": {
+      "type": "string"
+    },
+    "local_repairable": {
+      "type": "boolean"
+    },
+    "statement_drift": {
+      "type": "boolean"
+    },
+    "recommended_transition": {
+      "type": "string",
+      "enum": [
+        "LOCAL_REPAIR",
+        "RETURN_TO_ROUTE_ENGINE",
+        "SOURCE_AUDIT",
+        "HUMAN_REVIEW",
+        "PROMOTE_LOCAL",
+        "PROMOTE_GLOBAL"
+      ]
+    },
+    "verified_object": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "verified_admissibility": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "verified_violation": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "verified_source_independence": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    }
+  }
+}

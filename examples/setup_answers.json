@@ -1,0 +1,18 @@
+{
+  "title": "Remove a specified loss from a theorem in the base paper",
+  "statement": "For every admissible object, prove or refute the exact improved estimate.",
+  "objective": "Remove exactly the stated loss while preserving all quantifiers and uniformity.",
+  "hypotheses_and_domains": "List every domain, hypothesis, endpoint, and coefficient field here.",
+  "uniformity_and_endpoints": "The constant is independent of all problem data and degeneracies listed by the owner.",
+  "exclusions_and_statement_drift": "Do not replace the target by a weaker loss, a special case, or a bounded-parameter result.",
+  "proof_success": "A complete deductive proof of the exact statement, including every limiting step.",
+  "refutation_success": "An exact counterexample or rigorous unbounded sequence violating the target.",
+  "base_source_references": "arXiv identifier, title, version, or local paper path",
+  "source_files": [],
+  "literature_source_files": [],
+  "research_mode": "literature_guided",
+  "researcher_count": 2,
+  "parallel": true,
+  "allow_live_literature": false,
+  "literature_instructions": "Extract exact theorem statements, hypotheses, route mechanisms, limitations, and the unresolved bridge."
+}

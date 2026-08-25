@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ariadne chat-instruction interpreter response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "purpose",
+    "instruction",
+    "audience",
+    "route_id",
+    "target_instruction_ids",
+    "required_artifacts",
+    "budget",
+    "target_variant",
+    "clarification_needed",
+    "clarifying_question"
+  ],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "ADD",
+        "CANCEL",
+        "REPLACE",
+        "CONTINUE_REPORT",
+        "CHANGE_BUDGET",
+        "PROPOSE_CONTRACT_VARIANT"
+      ]
+    },
+    "purpose": {
+      "type": "string",
+      "enum": [
+        "RESEARCH_GUIDANCE",
+        "REPORT_REQUIREMENTS"
+      ]
+    },
+    "instruction": {
+      "type": "string"
+    },
+    "audience": {
+      "type": "string",
+      "enum": [
+        "all",
+        "researchers",
+        "sentinel",
+        "verifiers"
+      ]
+    },
+    "route_id": {
+      "type": "string"
+    },
+    "target_instruction_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "required_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "clarification_needed": {
+      "type": "boolean"
+    },
+    "clarifying_question": {
+      "type": "string"
+    },
+    "budget": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_epochs",
+            "max_calls",
+            "max_cost_usd",
+            "reason"
+          ],
+          "properties": {
+            "max_epochs": {
+              "type": "integer"
+            },
+            "max_calls": {
+              "type": "integer"
+            },
+            "max_cost_usd": {
+              "type": "number"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "target_variant": {
+      "type": "string"
+    }
+  }
+}

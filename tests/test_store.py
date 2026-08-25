@@ -1,0 +1,268 @@
+from __future__ import annotations
+
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from ariadne_math.agent import AgentRunner
+from ariadne_math.artifacts import ArtifactStore
+from ariadne_math.config import BudgetConfig, HarnessConfig, ModeConfig, ProviderConfig, RoleConfig
+from ariadne_math.enums import ClaimStatus, RouteMode
+from ariadne_math.models import AgentCall, ProviderResponse, Usage
+from ariadne_math.store import CampaignAlreadyRunning, ResearchStore
+
+
+class StoreTests(unittest.TestCase):
+    def test_campaign_controller_lock_excludes_parallel_controller_and_releases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ResearchStore(Path(tmp))
+            with store.campaign_controller_lock():
+                with self.assertRaises(CampaignAlreadyRunning):
+                    with ResearchStore(Path(tmp)).campaign_controller_lock():
+                        pass
+
+            # Leaving the context simulates normal completion or Ctrl+C cleanup.
+            with ResearchStore(Path(tmp)).campaign_controller_lock():
+                pass
+
+    def test_claim_route_and_failure_persist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ResearchStore(Path(tmp))
+            campaign = store.create_campaign(
+                mode="offline_sentinel", max_epochs=3, max_calls=10, max_cost_usd=5.0
+            )
+            claim = store.add_claim(
+                statement="For all x, P(x)", status=ClaimStatus.PROPOSED
+            )
+            route = store.add_route(
+                campaign_id=campaign,
+                title="Direct route",
+                target_claim_id=claim,
+                mode=RouteMode.DEDUCTIVE,
+                method_family="induction",
+                representation="native",
+                key_lemma="induction step",
+                central_mechanism="reduce n+1 to n",
+                decisive_test="prove step",
+                difference_from_existing="first route",
+                fingerprint="induction native",
+                independence_cluster="induction",
+                owner_slot="offline-1",
+            )
+            attempt = store.add_attempt(
+                campaign_id=campaign,
+                route_id=route,
+                epoch=1,
+                agent_slot="offline-1",
+                task="prove step",
+                result_kind="BLOCKED",
+                summary="constant is nonuniform",
+                artifact_id=None,
+                decisive_event=False,
+                cost_usd=0.1,
+                usage={},
+            )
+            failure, count = store.upsert_failure(
+                canonical_key="NONUNIFORM|constant n",
+                failure_class="NONUNIFORM_CONSTANT",
+                signature="constant depends on n",
+                logical_scope="this induction estimate",
+                revival_conditions="new invariant",
+                attempt_id=attempt,
+                cost_usd=0.1,
+            )
+            self.assertEqual(count, 1)
+            self.assertEqual(store.get_route(route)["title"], "Direct route")
+            self.assertEqual(store.list_failures()[0]["failure_id"], failure)
+            self.assertGreaterEqual(len(store.events.read_all()), 4)
+
+
+    def test_budget_reservation_is_atomic_under_concurrency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ResearchStore(Path(tmp))
+            campaign = store.create_campaign(
+                mode="offline_only", max_epochs=1, max_calls=1, max_cost_usd=1.0
+            )
+
+            def reserve(index: int) -> bool:
+                return store.reserve_budget(
+                    campaign,
+                    reservation_id=f"test-reservation-{index}",
+                    estimated_cost_usd=0.5,
+                )
+
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                results = list(pool.map(reserve, range(6)))
+            self.assertEqual(sum(results), 1)
+            state = store.get_campaign(campaign)
+            self.assertEqual(state["calls_used"], 1)
+            self.assertEqual(state["cost_used"], 0.5)
+
+    def test_recover_interrupted_campaign_preserves_reserved_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ResearchStore(root)
+            campaign = store.create_campaign(
+                mode="offline_only", max_epochs=1, max_calls=2, max_cost_usd=5.0
+            )
+            prompt = ArtifactStore(store.paths).put_text("prompt", kind="agent_prompt")
+            store.record_artifact(prompt)
+            run_id = store.start_agent_run(
+                campaign_id=campaign,
+                role="offline_researcher",
+                slot="offline-1",
+                route_id=None,
+                epoch=1,
+                task_summary="stale task",
+                provider="mock",
+                network_policy="deny",
+                isolation_status="MOCK_ISOLATED",
+                prompt_artifact_id=prompt.artifact_id,
+            )
+            task_id = store.add_task(
+                campaign_id=campaign,
+                epoch=1,
+                slot="offline-1",
+                role="offline_researcher",
+                route_id=None,
+                summary="stale task",
+            )
+            store.start_task(task_id, run_id=run_id)
+            self.assertTrue(
+                store.reserve_budget(
+                    campaign, reservation_id=run_id, estimated_cost_usd=1.0
+                )
+            )
+            recovered = store.recover_interrupted_campaign(campaign, recovered_by="test")
+            self.assertEqual(recovered, {"agent_runs": 1, "tasks": 1})
+            self.assertEqual(store.get_campaign(campaign)["status"], "PAUSED_HUMAN")
+            self.assertEqual(store.get_campaign(campaign)["calls_used"], 1)
+            self.assertEqual(store.get_campaign(campaign)["cost_used"], 1.0)
+            self.assertEqual(store.list_agent_runs(campaign)[0]["status"], "INTERRUPTED")
+            self.assertEqual(store.list_tasks(campaign)[0]["status"], "CANCELLED")
+
+    def test_budget_adjustment_requires_safe_pause_and_is_audited(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ResearchStore(Path(tmp))
+            campaign = store.create_campaign(
+                mode="offline_only", max_epochs=3, max_calls=4, max_cost_usd=5.0
+            )
+            with self.assertRaisesRegex(ValueError, "PAUSED_HUMAN, BUDGET_EXHAUSTED, or COMPLETED_UNSOLVED"):
+                store.adjust_campaign_budget(
+                    campaign, max_calls=6, adjusted_by="tester", reason="Need another route"
+                )
+            store.update_campaign(campaign, status="PAUSED_HUMAN", epoch=1)
+            updated = store.adjust_campaign_budget(
+                campaign, max_epochs=5, max_calls=8, max_cost_usd=9.5,
+                adjusted_by="tester", reason="Fund independent verification",
+            )
+            self.assertEqual(updated["max_epochs"], 5)
+            self.assertEqual(updated["max_calls"], 8)
+            self.assertEqual(updated["max_cost_usd"], 9.5)
+            decisions = store.list_decisions(campaign)
+            self.assertEqual(decisions[-1]["kind"], "HUMAN_BUDGET_ADJUSTMENT")
+            self.assertTrue(any(
+                event["event_type"] == "campaign_budget_adjusted"
+                for event in store.events.read_all()
+            ))
+            store.update_campaign(campaign, status="BUDGET_EXHAUSTED")
+            reopened = store.adjust_campaign_budget(
+                campaign, max_calls=9, adjusted_by="tester", reason="Reopen exhausted budget"
+            )
+            self.assertEqual(reopened["status"], "PAUSED_HUMAN")
+
+            with self.assertRaisesRegex(ValueError, "below calls already used"):
+                store.adjust_campaign_budget(
+                    campaign, max_calls=-1, adjusted_by="tester", reason="Invalid reduction"
+                )
+
+    def test_agent_settles_usage_only_provider_at_configured_token_price(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ResearchStore(root)
+            campaign = store.create_campaign(
+                mode="offline_only", max_epochs=1, max_calls=2, max_cost_usd=10.0
+            )
+            config = HarnessConfig(
+                providers={
+                    "metered": ProviderConfig(
+                        name="metered", kind="mock", estimated_cost_usd=1.0,
+                        input_cost_per_million_usd=2.5,
+                        cached_input_cost_per_million_usd=0.25,
+                        output_cost_per_million_usd=15.0,
+                    )
+                },
+                roles={"offline_researcher": RoleConfig(
+                    name="offline_researcher", provider="metered", network_policy="deny"
+                )},
+                budget=BudgetConfig(max_epochs=1, max_calls=2, max_cost_usd=10.0),
+                mode=ModeConfig(name="offline_only", offline_agents=1, literature_intervention=False),
+            )
+
+            class UsageOnlyProvider:
+                def run(self, call):
+                    return ProviderResponse(
+                        text="usage-only response",
+                        usage=Usage(
+                            input_tokens=1_000_000,
+                            cached_input_tokens=400_000,
+                            output_tokens=200_000,
+                        ),
+                    )
+
+            with mock.patch("ariadne_math.agent.create_provider", return_value=UsageOnlyProvider()):
+                AgentRunner(store, config).call(AgentCall(
+                    role="offline_researcher", slot="offline-1", prompt="test",
+                    project_root=root, network_policy="deny", campaign_id=campaign, epoch=1,
+                ))
+            # 0.6M uncached*$2.50 + 0.4M cached*$0.25 + 0.2M output*$15 = $4.60.
+            state = store.get_campaign(campaign)
+            self.assertEqual(state["cost_used"], 4.6)
+            run = store.list_agent_runs(campaign)[0]
+            self.assertEqual(run["cost_usd"], 4.6)
+
+    def test_agent_uses_estimated_cost_when_provider_omits_cost(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ResearchStore(root)
+            campaign = store.create_campaign(
+                mode="offline_only", max_epochs=1, max_calls=2, max_cost_usd=5.0
+            )
+            config = HarnessConfig(
+                providers={
+                    "mock": ProviderConfig(
+                        name="mock", kind="mock", estimated_cost_usd=1.25
+                    )
+                },
+                roles={
+                    "offline_researcher": RoleConfig(
+                        name="offline_researcher", provider="mock", network_policy="deny"
+                    )
+                },
+                budget=BudgetConfig(max_epochs=1, max_calls=2, max_cost_usd=5.0),
+                mode=ModeConfig(
+                    name="offline_only",
+                    offline_agents=1,
+                    literature_intervention=False,
+                ),
+            )
+            AgentRunner(store, config).call(
+                AgentCall(
+                    role="offline_researcher",
+                    slot="offline-1",
+                    prompt="test",
+                    project_root=root,
+                    network_policy="deny",
+                    campaign_id=campaign,
+                    epoch=1,
+                )
+            )
+            state = store.get_campaign(campaign)
+            self.assertEqual(state["calls_used"], 1)
+            self.assertEqual(state["cost_used"], 1.25)
+
+
+if __name__ == "__main__":
+    unittest.main()

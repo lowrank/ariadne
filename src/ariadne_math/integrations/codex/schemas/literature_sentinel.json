@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ariadne literature sentinel response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "interventions"
+  ],
+  "properties": {
+    "interventions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "route_id",
+          "kind",
+          "source_refs",
+          "message",
+          "early_stop",
+          "applicability_conditions",
+          "confidence",
+          "evidence_status"
+        ],
+        "properties": {
+          "route_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "KNOWN_ROUTE",
+              "KNOWN_DEAD_END",
+              "EXACT_RESULT_KNOWN",
+              "SOURCE_MISMATCH",
+              "DIFFERENCE_CONFIRMED"
+            ]
+          },
+          "source_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "message": {
+            "type": "string"
+          },
+          "early_stop": {
+            "type": "boolean"
+          },
+          "applicability_conditions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "evidence_status": {
+            "type": "string",
+            "enum": [
+              "EXACT_VERIFIED",
+              "CONCRETE_LEAD",
+              "INACCESSIBLE",
+              "UNRESOLVED"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

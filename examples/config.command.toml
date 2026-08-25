@@ -1,0 +1,84 @@
+[budget]
+max_epochs = 4
+max_calls = 24
+max_cost_usd = 30.0
+stagnation_epochs = 2
+duplicate_failure_limit = 2
+
+[mode]
+name = "offline_sentinel"
+offline_agents = 2
+research_agents = 0
+parallel = true
+literature_intervention = true
+require_route_difference_certificate = true
+novelty_deadline_epochs = 1
+allow_experiments = false
+route_similarity_threshold = 0.82
+
+[providers.offline_cli]
+kind = "command"
+command = ["python", "/absolute/path/to/offline_agent_wrapper.py"]
+timeout_seconds = 1200
+estimated_cost_usd = 1.0
+# For strict isolation, configure a host-appropriate prefix such as a container
+# or bubblewrap invocation, then set require_os_network_isolation = true.
+sandbox_prefix = []
+require_os_network_isolation = false
+
+[providers.literature_cli]
+kind = "command"
+command = ["python", "/absolute/path/to/literature_agent_wrapper.py"]
+timeout_seconds = 1200
+estimated_cost_usd = 1.0
+
+[providers.critic_cli]
+kind = "command"
+command = ["python", "/absolute/path/to/critic_wrapper.py"]
+timeout_seconds = 1200
+estimated_cost_usd = 2.0
+
+[roles.offline_researcher]
+provider = "offline_cli"
+network_policy = "deny"
+
+[roles.literature_researcher]
+provider = "literature_cli"
+network_policy = "allow"
+
+[roles.contract_author]
+provider = "offline_cli"
+network_policy = "deny"
+
+[roles.literature_author]
+provider = "literature_cli"
+network_policy = "allow"
+
+[roles.intervention_responder]
+provider = "offline_cli"
+network_policy = "deny"
+
+[roles.literature_sentinel]
+provider = "literature_cli"
+network_policy = "allow"
+
+[roles.local_verifier]
+provider = "critic_cli"
+network_policy = "deny"
+
+[roles.global_verifier]
+provider = "critic_cli"
+network_policy = "deny"
+
+[roles.conceptual_pivot]
+provider = "offline_cli"
+network_policy = "deny"
+
+
+[roles.result_synthesizer]
+provider = "offline_cli"
+network_policy = "deny"
+
+[roles.instruction_interpreter]
+provider = "offline_cli"
+network_policy = "deny"

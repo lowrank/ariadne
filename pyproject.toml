@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ariadne-math-harness"
+version = "0.4.0"
+description = "A cost-aware, route-aware harness for long-horizon mathematical research"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ariadne Math Harness contributors" }]
+keywords = ["mathematics", "research", "agents", "proof", "counterexample", "verification"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = [
+  "prompt_toolkit>=3.0.48",
+  "pypdf>=5.0",
+  "sympy>=1.13",
+]
+
+[project.scripts]
+ariadne = "ariadne_math.cli:main"
+ariadne-codex-provider = "ariadne_math.integrations.codex_provider:main"
+ariadne-tui = "ariadne_math.tui_cli:main"
+ariadne-research-tool = "ariadne_math.integrations.codex.research_tools:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ariadne_math = [
+  "prompts/*.md",
+  "integrations/codex/*.md",
+  "integrations/codex/*.toml",
+  "integrations/codex/schemas/*.json",
+]

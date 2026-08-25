@@ -1,0 +1,451 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ariadne offline researcher response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "route",
+    "status",
+    "summary",
+    "claims",
+    "failures",
+    "decisive_events",
+    "novelty_evidence",
+    "next_task",
+    "proof_candidate",
+    "counterexample_candidate",
+    "experiment_request",
+    "numerical_evidence"
+  ],
+  "properties": {
+    "route": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "title",
+            "mode",
+            "method_family",
+            "representation",
+            "key_lemma",
+            "central_mechanism",
+            "decisive_test",
+            "difference_from_existing",
+            "independence_cluster",
+            "revives_route_id",
+            "revival_certificate"
+          ],
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "DEDUCTIVE",
+                "REFUTATIONAL",
+                "CONCEPTUAL",
+                "EMPIRICAL"
+              ]
+            },
+            "method_family": {
+              "type": "string"
+            },
+            "representation": {
+              "type": "string"
+            },
+            "key_lemma": {
+              "type": "string"
+            },
+            "central_mechanism": {
+              "type": "string"
+            },
+            "decisive_test": {
+              "type": "string"
+            },
+            "difference_from_existing": {
+              "type": "string"
+            },
+            "independence_cluster": {
+              "type": "string"
+            },
+            "revives_route_id": {
+              "type": "string",
+              "description": "Exact METHOD_FAILED route ID being revived, or empty string for a new mechanism."
+            },
+            "revival_certificate": {
+              "type": "string",
+              "description": "Concrete independent mechanism and exact evidence; required only with revives_route_id."
+            }
+          }
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PROGRESS",
+        "BLOCKED",
+        "CANDIDATE_PROOF",
+        "COUNTEREXAMPLE_CANDIDATE"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statement",
+          "assumptions",
+          "scope",
+          "criticality"
+        ],
+        "properties": {
+          "statement": {
+            "type": "string"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scope": {
+            "type": "string"
+          },
+          "criticality": {
+            "type": "string",
+            "enum": [
+              "load-bearing",
+              "supporting"
+            ]
+          }
+        }
+      }
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "failure_class",
+          "signature",
+          "logical_scope",
+          "revival_conditions"
+        ],
+        "properties": {
+          "failure_class": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "logical_scope": {
+            "type": "string"
+          },
+          "revival_conditions": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "decisive_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "description"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "LOAD_BEARING_LEMMA",
+              "COUNTEREXAMPLE",
+              "EXACT_REDUCTION",
+              "NEW_REPRESENTATION",
+              "ROUTE_ELIMINATED",
+              "PRECISE_BRIDGE"
+            ]
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "novelty_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "intervention_id",
+          "evidence"
+        ],
+        "properties": {
+          "intervention_id": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "next_task": {
+      "type": "string"
+    },
+    "proof_candidate": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "statement",
+            "assumptions",
+            "proof",
+            "proof_latex",
+            "open_obligations"
+          ],
+          "properties": {
+            "statement": {
+              "type": "string"
+            },
+            "assumptions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "proof": {
+              "minLength": 500,
+              "type": "string"
+            },
+            "open_obligations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "proof_latex": {
+              "minLength": 500,
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "counterexample_candidate": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "description",
+            "verification",
+            "scope",
+            "origin",
+            "source_reference",
+            "independent_derivation"
+          ],
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "verification": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "origin": {
+              "type": "string",
+              "enum": [
+                "DERIVED",
+                "REFERENCE_REPORTED"
+              ]
+            },
+            "source_reference": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "independent_derivation": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "experiment_request": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mathematical_question",
+            "competing_hypotheses",
+            "possible_outcomes",
+            "domain",
+            "arithmetic",
+            "estimated_runtime_seconds",
+            "requires_human_approval",
+            "long_run_justification",
+            "stopping_rule",
+            "logical_force",
+            "scale",
+            "minimum_cpu_cores",
+            "minimum_memory_gb",
+            "requires_cuda",
+            "minimum_gpu_memory_gb",
+            "hpc_code",
+            "hpc_run_instructions"
+          ],
+          "properties": {
+            "mathematical_question": {
+              "type": "string"
+            },
+            "competing_hypotheses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "possible_outcomes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "domain": {
+              "type": "string"
+            },
+            "arithmetic": {
+              "type": "string"
+            },
+            "estimated_runtime_seconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "requires_human_approval": {
+              "type": "boolean"
+            },
+            "long_run_justification": {
+              "type": "string"
+            },
+            "stopping_rule": {
+              "type": "string"
+            },
+            "logical_force": {
+              "type": "string"
+            },
+            "scale": {
+              "type": "string",
+              "enum": [
+                "small",
+                "large"
+              ]
+            },
+            "minimum_cpu_cores": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minimum_memory_gb": {
+              "type": "number",
+              "minimum": 0
+            },
+            "requires_cuda": {
+              "type": "boolean"
+            },
+            "minimum_gpu_memory_gb": {
+              "type": "number",
+              "minimum": 0
+            },
+            "hpc_code": {
+              "type": "string"
+            },
+            "hpc_run_instructions": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "numerical_evidence": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "summary",
+            "method",
+            "output",
+            "runtime_seconds",
+            "reproducibility",
+            "logical_force"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "FLOATING_POINT_EXPERIMENT",
+                "EXHAUSTIVE_FINITE_SEARCH",
+                "INTERVAL_CERTIFICATE",
+                "SYMBOLIC_CERTIFICATE"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "method": {
+              "type": "string"
+            },
+            "output": {
+              "type": "string"
+            },
+            "runtime_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "reproducibility": {
+              "type": "string"
+            },
+            "logical_force": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
