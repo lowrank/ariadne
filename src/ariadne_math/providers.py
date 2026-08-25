@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -53,6 +54,7 @@ class CommandProvider(BaseProvider):
         if call.network_policy == "deny":
             base_env = redact_environment(base_env)
         base_env.update(self.config.env)
+        artifact_context = (call.metadata or {}).get("artifact_context", [])
         base_env.update(
             {
                 "ARIADNE_ROLE": call.role,
@@ -61,6 +63,7 @@ class CommandProvider(BaseProvider):
                 "ARIADNE_NETWORK_POLICY": call.network_policy,
                 "ARIADNE_ROUTE_ID": call.route_id or "",
                 "ARIADNE_EPOCH": str(call.epoch or 0),
+                "ARIADNE_ARTIFACT_CONTEXT": json.dumps(artifact_context),
             }
         )
 

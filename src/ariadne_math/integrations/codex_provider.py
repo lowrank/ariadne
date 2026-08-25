@@ -62,6 +62,9 @@ PROGRAMMING_ROLES = {
     "global_verifier",
 }
 
+MAX_ARTIFACT_CONTEXT_FILES = 36
+MAX_ARTIFACT_CONTEXT_BYTES = 64 * 1024 * 1024
+
 
 class CodexProviderError(RuntimeError):
     pass
@@ -82,6 +85,100 @@ def _role() -> str:
             f"Unsupported ARIADNE_ROLE={role!r}; supported roles: {supported}"
         )
     return role
+
+
+def _stage_artifact_context(workspace: Path) -> dict[str, Any]:
+    # Materialize a bounded copy, never a link to project state. This lets a
+    # programming role inspect exact evidence without granting write access to
+    # the campaign directory or mutating content-addressed artifacts.
+    raw = os.environ.get("ARIADNE_ARTIFACT_CONTEXT", "[]")
+    project_raw = os.environ.get("ARIADNE_PROJECT_ROOT", "").strip()
+    if not project_raw:
+        return {"available": [], "skipped": []}
+    try:
+        records = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"available": [], "skipped": [{"reason": "invalid artifact context manifest"}]}
+    if not isinstance(records, list):
+        return {"available": [], "skipped": [{"reason": "artifact context is not a list"}]}
+    project_root = Path(project_raw).resolve()
+    artifact_root = (project_root / ".ariadne" / "artifacts").resolve()
+    literature_root = (project_root / ".ariadne" / "literature").resolve()
+    context_root = workspace / "ariadne-context"
+    context_root.mkdir(parents=True, exist_ok=True)
+    available: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    total_bytes = 0
+    seen: set[str] = set()
+
+    for record in records[:MAX_ARTIFACT_CONTEXT_FILES]:
+        if not isinstance(record, dict):
+            skipped.append({"reason": "invalid context record"})
+            continue
+        relative = str(record.get("relative_path", "")).strip()
+        if not relative or relative in seen:
+            continue
+        seen.add(relative)
+        candidate = Path(relative)
+        if candidate.is_absolute():
+            skipped.append({"relative_path": relative, "reason": "absolute path refused"})
+            continue
+        source = (project_root / candidate).resolve()
+        if not (
+            source.is_relative_to(artifact_root)
+            or source.is_relative_to(literature_root)
+        ):
+            skipped.append({"relative_path": relative, "reason": "path outside permitted evidence roots"})
+            continue
+        if not source.is_file() or source.is_symlink():
+            skipped.append({"relative_path": relative, "reason": "source file unavailable"})
+            continue
+        size = source.stat().st_size
+        if total_bytes + size > MAX_ARTIFACT_CONTEXT_BYTES:
+            skipped.append({"relative_path": relative, "reason": "context byte cap reached"})
+            continue
+        destination = context_root / candidate
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copyfile(source, destination)
+            destination.chmod(0o444)
+        except OSError as exc:
+            skipped.append({"relative_path": relative, "reason": f"copy failed: {exc}"})
+            continue
+        total_bytes += size
+        available.append(
+            {
+                "id": str(record.get("id", "")),
+                "kind": str(record.get("kind", "artifact")),
+                "relative_path": relative,
+                "workspace_relative_path": str(destination.relative_to(workspace)),
+                "size": size,
+            }
+        )
+
+    manifest = {
+        "version": 1,
+        "read_only": True,
+        "available": available,
+        "skipped": skipped,
+        "total_bytes": total_bytes,
+    }
+    (context_root / "MANIFEST.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def _artifact_context_instruction(manifest: dict[str, Any]) -> str:
+    available = manifest.get("available", [])
+    if not available:
+        return ""
+    return (
+        "\n\nAriadne staged an isolated, read-only evidence snapshot in ariadne-context/. "
+        "Read ariadne-context/MANIFEST.json before opening an exact artifact. "
+        "Only files listed there are available; do not infer omitted material or write into that directory.\n"
+    )
 
 
 def _web_mode(role: str) -> str:
@@ -314,6 +411,8 @@ def run() -> dict[str, Any]:
     ):
         workspace = Path(temp_dir) / "workspace"
         workspace.mkdir(parents=True, exist_ok=True)
+        artifact_manifest = _stage_artifact_context(workspace)
+        prompt += _artifact_context_instruction(artifact_manifest)
         output_path = Path(temp_dir) / "final.json"
         command = _build_command(
             binary=binary,

@@ -288,6 +288,47 @@ class StoreTests(unittest.TestCase):
             run = store.list_agent_runs(campaign)[0]
             self.assertEqual(run["cost_usd"], 4.6)
 
+    def test_agent_exposes_recent_artifacts_to_provider_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ResearchStore(root)
+            campaign = store.create_campaign(
+                mode="offline_only", max_epochs=1, max_calls=2, max_cost_usd=5.0
+            )
+            evidence = ArtifactStore(store.paths).put_text(
+                "Exact retained evidence.", kind="partial_result"
+            )
+            store.record_artifact(evidence)
+            config = HarnessConfig(
+                providers={"mock": ProviderConfig(name="mock", kind="mock")},
+                roles={"offline_researcher": RoleConfig(
+                    name="offline_researcher", provider="mock", network_policy="deny"
+                )},
+                budget=BudgetConfig(max_epochs=1, max_calls=2, max_cost_usd=5.0),
+                mode=ModeConfig(name="offline_only", offline_agents=1, literature_intervention=False),
+            )
+            captured = []
+
+            class CapturingProvider:
+                def run(self, call):
+                    captured.append(call)
+                    return ProviderResponse(text="{}", usage=Usage())
+
+            with mock.patch("ariadne_math.agent.create_provider", return_value=CapturingProvider()):
+                AgentRunner(store, config).call(AgentCall(
+                    role="offline_researcher",
+                    slot="offline-1",
+                    prompt="Inspect retained evidence.",
+                    project_root=root,
+                    network_policy="deny",
+                    campaign_id=campaign,
+                    epoch=1,
+                ))
+            self.assertIn("Local artifact context", captured[0].prompt)
+            context = captured[0].metadata["artifact_context"]
+            self.assertEqual(context[0]["id"], evidence.artifact_id)
+            self.assertEqual(context[0]["relative_path"], str(evidence.path.relative_to(root)))
+
     def test_agent_uses_estimated_cost_when_provider_omits_cost(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

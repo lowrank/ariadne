@@ -158,6 +158,11 @@ if log_path:
         "codex_home": os.environ.get("CODEX_HOME"),
         "workspace_exists": workspace.is_dir(),
         "workspace_entries": sorted(p.name for p in workspace.iterdir()),
+        "context_manifest": (
+            json.loads((workspace / "ariadne-context" / "MANIFEST.json").read_text(encoding="utf-8"))
+            if (workspace / "ariadne-context" / "MANIFEST.json").is_file()
+            else {}
+        ),
         "schema_exists": schema.is_file()
     }), encoding="utf-8")
 else:
@@ -241,6 +246,31 @@ class CodexProviderTests(unittest.TestCase):
         self.assertFalse(log["has_llamaparse_api_key"])
         self.assertEqual(log["codex_home"], str(self.root / "codex-home"))
         self.assertEqual(log["prompt"], "test prompt")
+
+    def test_stages_curated_artifacts_in_an_isolated_workspace(self) -> None:
+        project = self.root / "project"
+        relative = ".ariadne/artifacts/aa/evidence.md"
+        evidence = project / relative
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text("exact retained lemma", encoding="utf-8")
+        env = self.env("offline_researcher", "deny")
+        env["ARIADNE_PROJECT_ROOT"] = str(project)
+        env["ARIADNE_ARTIFACT_CONTEXT"] = json.dumps([
+            {
+                "id": "ART-test",
+                "kind": "proof_candidate",
+                "relative_path": relative,
+            }
+        ])
+        completed = self.invoke(env)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        log = json.loads(self.log.read_text(encoding="utf-8"))
+        self.assertIn("ariadne-context", log["workspace_entries"])
+        manifest = log["context_manifest"]
+        self.assertTrue(manifest["read_only"])
+        self.assertEqual(manifest["available"][0]["id"], "ART-test")
+        self.assertEqual(manifest["available"][0]["workspace_relative_path"], "ariadne-context/" + relative)
+        self.assertEqual(manifest["skipped"], [])
 
     def test_literature_research_role_has_coding_without_changing_web_policy(self) -> None:
         env = self.env("literature_researcher", "allow")

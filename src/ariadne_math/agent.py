@@ -39,6 +39,14 @@ class AgentRunner:
             route_id=call.route_id,
         )
         prompt_text = self._prompt_with_human_instructions(call.prompt, instructions)
+        artifact_context = self._artifact_context_for_call(call)
+        if artifact_context:
+            prompt_text += (
+                "\n\n# Local artifact context\n"
+                "A curated, read-only snapshot of the referenced project material is available "
+                "inside this invocation at ariadne-context/. Use ariadne-context/MANIFEST.json "
+                "to map IDs to files, inspect an exact file only when needed, and do not write there.\n"
+            )
         prompt_artifact = self.artifacts.put_text(
             prompt_text,
             kind="agent_prompt",
@@ -127,7 +135,10 @@ class AgentRunner:
             campaign_id=call.campaign_id,
             route_id=call.route_id,
             epoch=call.epoch,
-            metadata=call.metadata,
+            metadata={
+                **(call.metadata or {}),
+                "artifact_context": artifact_context,
+            },
         )
         try:
             response = provider.run(effective_call)
@@ -257,6 +268,55 @@ class AgentRunner:
                 + usage.output_tokens * float(prices[2])
             ) / 1_000_000
         return reserved_cost_usd
+
+    def _artifact_context_for_call(self, call: AgentCall) -> list[dict[str, str]]:
+        # These are copied into a per-invocation scratch snapshot by the Codex
+        # wrapper. The compact prompt still carries the index, so exact files are
+        # opened only on demand rather than consuming every role's context.
+        records: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        def add(record: dict[str, object], identifier: str) -> None:
+            relative = str(record.get("relative_path", "")).strip()
+            if not relative or relative in seen:
+                return
+            seen.add(relative)
+            records.append(
+                {
+                    "id": identifier,
+                    "kind": str(record.get("kind", "artifact")),
+                    "relative_path": relative,
+                }
+            )
+
+        literature_roles = {
+            "literature_researcher",
+            "literature_author",
+            "literature_sentinel",
+            "contract_resolver",
+            "proof_expander",
+        }
+        for artifact in self.store.list_artifacts(limit=24):
+            metadata = artifact.get("metadata", {})
+            if (
+                call.role == "offline_researcher"
+                and (
+                    str(metadata.get("role", "")) in literature_roles
+                    or "literature" in str(artifact.get("kind", "")).lower()
+                )
+            ):
+                continue
+            add(artifact, str(artifact.get("artifact_id", "")))
+        if call.role in literature_roles:
+            for source in self.store.list_literature_sources()[-12:]:
+                add(
+                    {
+                        "kind": "literature_source",
+                        "relative_path": source.get("relative_path", ""),
+                    },
+                    str(source.get("source_id", "")),
+                )
+        return records[:36]
 
     @staticmethod
     def _prompt_with_human_instructions(
