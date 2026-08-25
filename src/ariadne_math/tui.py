@@ -1704,7 +1704,7 @@ class AriadneTUI:
         self.selected_failure = min(self.selected_failure, len(failures) - 1)
         listing = "\n".join(
             ("> " if i == self.selected_failure else "  ")
-            + f"{self._status_indicator(f.get('status', 'ACTIVE')):<2} {f['failure_id']} / {f['failure_class']}"
+            + f"• {f['failure_id']} / {f['failure_class']}"
             for i, f in enumerate(failures)
         )
         return listing + "\n\n↑/↓ browse  •  j preview"

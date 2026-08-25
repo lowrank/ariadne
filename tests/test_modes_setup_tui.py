@@ -1512,6 +1512,8 @@ class ModeSetupTuiTests(unittest.TestCase):
         self.assertIn("Statement: Prove P for every admissible X.", route_preview)
         failure_list = tui._failures_text()
         self.assertIn("j preview", failure_list)
+        self.assertIn("• FAIL-", failure_list)
+        self.assertFalse(any(marker in failure_list for marker in ("◐", "◓", "◑", "◒")))
         self.assertNotIn("use a symmetric form", failure_list)
         self.assertIn("Revival conditions: use a symmetric form", tui._failure_preview_text())
 
