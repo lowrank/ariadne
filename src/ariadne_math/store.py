@@ -1184,6 +1184,14 @@ class ResearchStore:
                 (predecessor, successor, edge_type),
             )
 
+    def list_claim_edges(self) -> list[dict[str, Any]]:
+        with self.transaction() as conn:
+            rows = conn.execute(
+                "SELECT predecessor_id,successor_id,edge_type "
+                "FROM claim_edges ORDER BY predecessor_id,successor_id,edge_type"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def add_route(
         self,
         *,

@@ -1357,12 +1357,16 @@ class ModeSetupTuiTests(unittest.TestCase):
         phase_zero = tui._active_shimmer_fragments(line, phase=0)
         phase_later = tui._active_shimmer_fragments(line, phase=4)
         self.assertEqual("".join(fragment for _, fragment in phase_zero), line)
-        self.assertGreater(len({style for style, _ in phase_zero}), 1)
+        self.assertGreater(len({style for style, _ in phase_zero[:8]}), 1)
+        self.assertEqual(phase_zero[7][0], "class:panel-active-wave-2")
+        self.assertEqual(phase_zero[-1], ("class:panel-active", line[8:]))
         self.assertNotEqual(phase_zero, phase_later)
         selected = tui._active_shimmer_fragments(line, selected=True, phase=0)
         self.assertTrue(
-            all(style.startswith("class:panel-selected-wave-") for style, _ in selected)
+            all(style.startswith("class:panel-selected-wave-") for style, _ in selected[:8])
         )
+        self.assertEqual(selected[7][0], "class:panel-selected-wave-3")
+        self.assertEqual(selected[-1], ("class:panel-selected-wave-3", line[8:]))
 
     def test_partial_result_claim_is_retained_and_browsable_as_an_artifact(self) -> None:
         config_path = self._config("offline_only", offline=1)
@@ -1408,6 +1412,14 @@ class ModeSetupTuiTests(unittest.TestCase):
             if item["artifact_id"] == partial_result[0]["artifact_id"]
         )
         self.assertIn("Statement: The exact identity holds", tui._artifact_preview_text())
+        claim_graph = tui._claims_text()
+        self.assertIn("Logical propositions and dependencies only", claim_graph)
+        self.assertIn("→ supports", claim_graph)
+        self.assertNotIn(partial_result[0]["artifact_id"], claim_graph)
+        claim_detail = tui._claim_preview_text()
+        self.assertIn("Selected: Logical claim", claim_detail)
+        self.assertIn("Supports:", claim_detail)
+        self.assertIn("Underlying evidence and full research notes are in the Artifacts panel.", claim_detail)
 
     def test_route_roundtable_shares_only_complementary_route_state(self) -> None:
         config = load_config(self._config("offline_only", offline=1))
@@ -1529,7 +1541,7 @@ class ModeSetupTuiTests(unittest.TestCase):
             tui = AriadneTUI(self.root, config_path)
             tui.run()
         self.assertIsNotNone(tui._app)
-        self.assertEqual(tui._app.refresh_interval, 0.125)
+        self.assertEqual(tui._app.refresh_interval, 1 / 24)
 
     def test_setup_document_type_matches_each_offline_mode(self) -> None:
         for mode, filename in (

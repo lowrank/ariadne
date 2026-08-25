@@ -95,6 +95,7 @@ class AriadneTUI:
         self.selected_artifact: int | None = None
         self.selected_task: int | None = None
         self.selected_route: int | None = None
+        self.selected_claim: int | None = None
         self.selected_failure: int | None = None
         self.preview_panel: str | None = None
         self.message = "Ready"
@@ -426,7 +427,10 @@ class AriadneTUI:
         )
         route_controls: list[Any] = []
         routes = panel("Routes", self._routes_text, control_holder=route_controls)
-        claims = panel("Partial results / claims", self._claims_text)
+        claim_controls: list[Any] = []
+        claims = panel(
+            "Logical claim graph", self._claims_text, control_holder=claim_controls
+        )
         failure_controls: list[Any] = []
         failures = panel(
             "Failure clusters", self._failures_text,
@@ -448,6 +452,11 @@ class AriadneTUI:
         route_preview = panel(
             "Route preview (k: return)", self._route_preview_text,
             control_holder=route_preview_controls, include_in_focus_cycle=False,
+        )
+        claim_preview_controls: list[Any] = []
+        claim_preview = panel(
+            "Claim graph detail (k: return)", self._claim_preview_text,
+            control_holder=claim_preview_controls, include_in_focus_cycle=False,
         )
         failure_preview_controls: list[Any] = []
         failure_preview = panel(
@@ -1031,6 +1040,7 @@ class AriadneTUI:
             preview_titles = {
                 "task": "Task preview (k: return)",
                 "route": "Route preview (k: return)",
+                "claim": "Claim graph detail (k: return)",
                 "failure": "Failure-cluster preview (k: return)",
                 "artifact": "Artifact preview (k: return)",
             }
@@ -1055,6 +1065,7 @@ class AriadneTUI:
             source_controls = {
                 "task": task_controls,
                 "route": route_controls,
+                "claim": claim_controls,
                 "failure": failure_controls,
                 "artifact": artifact_controls,
             }
@@ -1091,6 +1102,30 @@ class AriadneTUI:
         @kb.add("j", filter=Condition(_route_panel_focused))
         def _route_open(event) -> None:
             _open_preview("route", self.store.list_routes(), "selected_route", route_preview_controls, event)
+
+        def _claim_panel_focused() -> bool:
+            return _focused(claim_controls)
+
+        @kb.add("up", filter=Condition(_claim_panel_focused))
+        def _claim_up(event) -> None:
+            _move_selected(
+                -1, self.store.list_claims(), "selected_claim", "Logical claim graph",
+                claim_controls, self._claims_text, event,
+            )
+
+        @kb.add("down", filter=Condition(_claim_panel_focused))
+        def _claim_down(event) -> None:
+            _move_selected(
+                1, self.store.list_claims(), "selected_claim", "Logical claim graph",
+                claim_controls, self._claims_text, event,
+            )
+
+        @kb.add("j", filter=Condition(_claim_panel_focused))
+        def _claim_open(event) -> None:
+            _open_preview(
+                "claim", self.store.list_claims(), "selected_claim",
+                claim_preview_controls, event,
+            )
 
         def _failure_panel_focused() -> bool:
             return _focused(failure_controls)
@@ -1267,6 +1302,13 @@ class AriadneTUI:
                 Float(
                     left=1, right=1, top=1, bottom=4,
                     content=ConditionalContainer(
+                        content=claim_preview,
+                        filter=Condition(lambda: self.preview_panel == "claim"),
+                    ),
+                ),
+                Float(
+                    left=1, right=1, top=1, bottom=4,
+                    content=ConditionalContainer(
                         content=failure_preview,
                         filter=Condition(lambda: self.preview_panel == "failure"),
                     ),
@@ -1305,9 +1347,10 @@ class AriadneTUI:
             key_bindings=kb,
             full_screen=True,
             mouse_support=True,
-            # This redraw clock drives only the in-memory visual shimmer.
-            # Store polling remains on the one-second panel-refresh thread.
-            refresh_interval=0.125,
+            # This redraw clock drives only the first-eight-character
+            # activity shimmer. Store polling remains on the one-second
+            # panel-refresh thread.
+            refresh_interval=1 / 24,
             style=style,
         )
         self._app = app
@@ -1405,16 +1448,29 @@ class AriadneTUI:
         """Render a low-key grayscale pulse that visibly travels left to right."""
         if not line:
             return []
-        phase = int(time.monotonic() * 8) if phase is None else phase
-        cycle = 24
-        chunk_width = 2
+        phase = int(time.monotonic() * 24) if phase is None else phase
+        cycle = 16
+        animated_width = min(8, len(line))
         fragments: list[tuple[str, str]] = []
         prefix = "class:panel-selected-wave-" if selected else "class:panel-active-wave-"
-        for offset in range(0, len(line), chunk_width):
-            position = offset // chunk_width
+        baseline = 3 if selected else 2
+        for position in range(animated_width):
             distance = abs(((position - phase + cycle // 2) % cycle) - cycle // 2)
-            brightness = max(0, 4 - distance)
-            fragments.append((prefix + str(brightness), line[offset: offset + chunk_width]))
+            wave_brightness = max(0, 4 - distance)
+            # The amplitude falls to zero at the cutoff, so character eight
+            # already has the static gray and the rest of the row is seamless.
+            taper = (
+                (animated_width - position - 1) / max(1, animated_width - 1)
+            )
+            brightness = int(round(baseline + (wave_brightness - baseline) * taper))
+            fragments.append((prefix + str(brightness), line[position: position + 1]))
+        if animated_width < len(line):
+            fragments.append(
+                (
+                    "class:panel-selected-wave-3" if selected else "class:panel-active",
+                    line[animated_width:],
+                )
+            )
         return fragments
 
     @staticmethod
@@ -1683,19 +1739,104 @@ class AriadneTUI:
         return "\n".join(lines)
 
     def _claims_text(self) -> str:
+        """A compact logical index, deliberately separate from artifact files."""
         claims = self.store.list_claims()
-        attempts = self.store.list_attempts()
-        lines = [
-            f"{self._status_indicator(c.get('status')):<2} {self._clip(c.get('statement') or c['claim_id'], 78)}"
-            for c in claims[-7:]
-        ]
-        if attempts:
-            lines.append("\nPartial results:")
-            lines.extend(
-                f"E{a['epoch']} {a['agent_slot']} → {self._route_label(a.get('route_id'), 32)}"
-                for a in attempts[-4:]
+        if not claims:
+            return "No logical claims recorded."
+        if self.selected_claim is None:
+            self.selected_claim = len(claims) - 1
+        self.selected_claim = min(max(0, self.selected_claim), len(claims) - 1)
+        window_start = max(0, min(self.selected_claim - 6, len(claims) - 7))
+        visible = claims[window_start: window_start + 7]
+        incoming: dict[str, list[dict[str, Any]]] = {}
+        outgoing: dict[str, list[dict[str, Any]]] = {}
+        for edge in self.store.list_claim_edges():
+            outgoing.setdefault(str(edge["predecessor_id"]), []).append(edge)
+            incoming.setdefault(str(edge["successor_id"]), []).append(edge)
+
+        lines: list[str] = []
+        for index, claim in enumerate(visible):
+            claim_id = str(claim["claim_id"])
+            supports = outgoing.get(claim_id, [])
+            supported_by = incoming.get(claim_id, [])
+            if supports:
+                relation = " → " + ", ".join(
+                    str(edge["edge_type"]).replace("_", " ")
+                    for edge in supports[:2]
+                )
+            elif supported_by:
+                relation = f" ← {len(supported_by)} support"
+                if len(supported_by) != 1:
+                    relation += "s"
+            else:
+                relation = ""
+            prefix = "> " if window_start + index == self.selected_claim else "  "
+            category = str(claim.get("criticality", "supporting"))
+            lines.append(
+                prefix
+                + f"• {category:<10} {self._clip(claim.get('statement') or claim_id, 50)}{relation}"
             )
-        return "\n".join(lines) or "No claims or attempts recorded."
+        nl = chr(10)
+        return (
+            nl.join(lines)
+            + nl + nl + "Logical propositions and dependencies only; evidence files are in Artifacts."
+            + nl + "↑/↓ browse  •  j graph detail"
+        )
+
+    def _claim_preview_text(self) -> str:
+        claims = self.store.list_claims()
+        if not claims:
+            return "No logical claim is available. Press k to return."
+        if self.selected_claim is None:
+            self.selected_claim = len(claims) - 1
+        self.selected_claim = min(max(0, self.selected_claim), len(claims) - 1)
+        claim = claims[self.selected_claim]
+        by_id = {str(item["claim_id"]): item for item in claims}
+        claim_id = str(claim["claim_id"])
+        edges = self.store.list_claim_edges()
+        incoming = [
+            edge for edge in edges if str(edge["successor_id"]) == claim_id
+        ]
+        outgoing = [
+            edge for edge in edges if str(edge["predecessor_id"]) == claim_id
+        ]
+        lines = [
+            "Selected: Logical claim",
+            "",
+            f"ID: {claim_id}",
+            f"Status: {claim.get('status', '')}",
+            f"Criticality: {claim.get('criticality', '')}",
+            f"Scope: {claim.get('scope', '')}",
+            f"Source: {claim.get('source', '')}",
+            f"Statement: {claim.get('statement', '')}",
+            "Assumptions: " + (
+                "; ".join(str(item) for item in claim.get("assumptions", []))
+                or "none recorded"
+            ),
+            "",
+            "Claim graph:",
+        ]
+        if incoming:
+            lines.append("  Supported by:")
+            lines.extend(
+                f"    ← [{edge['edge_type']}] {edge['predecessor_id']}: "
+                f"{self._clip(by_id.get(str(edge['predecessor_id']), {}).get('statement', ''), 120)}"
+                for edge in incoming
+            )
+        if outgoing:
+            lines.append("  Supports:")
+            lines.extend(
+                f"    → [{edge['edge_type']}] {edge['successor_id']}: "
+                f"{self._clip(by_id.get(str(edge['successor_id']), {}).get('statement', ''), 120)}"
+                for edge in outgoing
+            )
+        if not incoming and not outgoing:
+            lines.append("  No recorded logical dependencies.")
+        lines.append("")
+        lines.append("Underlying evidence and full research notes are in the Artifacts panel.")
+        lines.append("")
+        lines.append("Press k or Esc to return to the list.")
+        return chr(10).join(lines)
 
     def _failures_text(self) -> str:
         failures = self.store.list_failures()
