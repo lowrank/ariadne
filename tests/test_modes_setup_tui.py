@@ -1345,28 +1345,16 @@ class ModeSetupTuiTests(unittest.TestCase):
 
     def test_tui_compact_status_indicators_replace_lifecycle_words(self) -> None:
         tui = AriadneTUI(self.root, self._config("offline_only", offline=1))
-        self.assertIn(tui._status_indicator("RUNNING"), {"◐", "◓", "◑", "◒"})
+        self.assertEqual(tui._status_indicator("RUNNING"), "●")
+        self.assertEqual(tui._status_indicator("ACTIVE"), "●")
         self.assertEqual(tui._status_indicator("QUEUED"), "○")
         self.assertEqual(tui._status_indicator("COMPLETED"), "✓")
         self.assertEqual(tui._status_indicator("FAILED"), "×")
         self.assertEqual(tui._status_indicator("PAUSED_HUMAN"), "Ⅱ")
         self.assertEqual(tui._status_indicator("BUDGET_EXHAUSTED"), "!")
+        self.assertIn("● work", tui._footer_text())
         self.assertIn("! blocked/budget", tui._footer_text())
         self.assertIn("Ⅱ paused", tui._footer_text())
-        line = "◐ offline-1 → Direct route"
-        phase_zero = tui._active_shimmer_fragments(line, phase=0)
-        phase_later = tui._active_shimmer_fragments(line, phase=4)
-        self.assertEqual("".join(fragment for _, fragment in phase_zero), line)
-        self.assertGreater(len({style for style, _ in phase_zero[:8]}), 1)
-        self.assertEqual(phase_zero[7][0], "class:panel-active-wave-2")
-        self.assertEqual(phase_zero[-1], ("class:panel-active", line[8:]))
-        self.assertNotEqual(phase_zero, phase_later)
-        selected = tui._active_shimmer_fragments(line, selected=True, phase=0)
-        self.assertTrue(
-            all(style.startswith("class:panel-selected-wave-") for style, _ in selected[:8])
-        )
-        self.assertEqual(selected[7][0], "class:panel-selected-wave-3")
-        self.assertEqual(selected[-1], ("class:panel-selected-wave-3", line[8:]))
 
     def test_partial_result_claim_is_retained_and_browsable_as_an_artifact(self) -> None:
         config_path = self._config("offline_only", offline=1)
@@ -1541,7 +1529,7 @@ class ModeSetupTuiTests(unittest.TestCase):
             tui = AriadneTUI(self.root, config_path)
             tui.run()
         self.assertIsNotNone(tui._app)
-        self.assertEqual(tui._app.refresh_interval, 1 / 24)
+        self.assertIsNone(tui._app.refresh_interval)
 
     def test_setup_document_type_matches_each_offline_mode(self) -> None:
         for mode, filename in (

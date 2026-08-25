@@ -287,8 +287,9 @@ class AriadneTUI:
                     marker = line.removeprefix("> ").lstrip()[:1]
                     if marker == "×" or any(token in upper for token in ("FAILED", "ERROR", "CRASHED", "EXCEPTION")):
                         return [("class:panel-failure", line)]
-                    if marker in {"◐", "◓", "◑", "◒", "○"} or any(token in upper for token in ("RUNNING", "ACTIVE", "QUEUED", "PENDING")):
-                        return AriadneTUI._active_shimmer_fragments(line, selected=selected)
+                    is_live = marker in {"●", "◐", "◓", "◑", "◒", "○"}
+                    if is_live:
+                        return [("class:panel-active", line)]
                     if selected:
                         return [("class:panel-selected", line)]
                     if marker == "✓" or any(token in upper for token in ("COMPLETED", "VERIFIED", "PROVEN", "SUCCEEDED")):
@@ -321,8 +322,12 @@ class AriadneTUI:
                 with panel_cache_lock:
                     text = panel_cache.get(self._panel_key, self._last_text)
                 if text != self._last_text and self.buffer.selection_state is None:
+                    # Keep the current viewport stable during live refreshes.
+                    # The initial cursor is at zero, so newly focused panels
+                    # begin at their newest/topmost row rather than jumping down.
+                    cursor = min(self.buffer.cursor_position, len(text))
                     self.buffer.set_document(
-                        Document(text=text),
+                        Document(text=text, cursor_position=cursor),
                         bypass_readonly=True,
                     )
                     self._last_text = text
@@ -1035,7 +1040,7 @@ class AriadneTUI:
                 self.message = f"No {kind} records available to preview"
                 return
             if getattr(self, attribute) is None:
-                setattr(self, attribute, len(items) - 1)
+                setattr(self, attribute, 0)
             self.preview_panel = kind
             preview_titles = {
                 "task": "Task preview (k: return)",
@@ -1242,17 +1247,7 @@ class AriadneTUI:
                 "footer": "reverse",
                 # Codex-like semantic terminal palette.
                 "panel-selected": "bold fg:#ffffff bg:#243447",
-                "panel-active": "fg:#8b929a",
-                "panel-active-wave-0": "fg:#62676d",
-                "panel-active-wave-1": "fg:#747a81",
-                "panel-active-wave-2": "fg:#899099",
-                "panel-active-wave-3": "fg:#a2aab3",
-                "panel-active-wave-4": "fg:#c6cdd5",
-                "panel-selected-wave-0": "fg:#7d858e bg:#243447",
-                "panel-selected-wave-1": "fg:#929aa4 bg:#243447",
-                "panel-selected-wave-2": "fg:#aab2bb bg:#243447",
-                "panel-selected-wave-3": "fg:#c3cad1 bg:#243447",
-                "panel-selected-wave-4": "fg:#f0f3f5 bg:#243447",
+                "panel-active": "fg:#87a7c4",
                 "panel-success": "fg:#10a37f",
                 "panel-warning": "fg:#f5c242",
                 "panel-failure": "fg:#ff8a8a",
@@ -1347,10 +1342,9 @@ class AriadneTUI:
             key_bindings=kb,
             full_screen=True,
             mouse_support=True,
-            # This redraw clock drives only the first-eight-character
-            # activity shimmer. Store polling remains on the one-second
-            # panel-refresh thread.
-            refresh_interval=1 / 24,
+            # No continuous visual animation: redraw only for input and
+            # the existing one-second state refresh.
+            refresh_interval=None,
             style=style,
         )
         self._app = app
@@ -1442,45 +1436,10 @@ class AriadneTUI:
         return text if len(text) <= limit else text[: limit - 1] + "…"
 
     @staticmethod
-    def _active_shimmer_fragments(
-        line: str, *, selected: bool = False, phase: int | None = None
-    ) -> list[tuple[str, str]]:
-        """Render a low-key grayscale pulse that visibly travels left to right."""
-        if not line:
-            return []
-        phase = int(time.monotonic() * 24) if phase is None else phase
-        cycle = 16
-        animated_width = min(8, len(line))
-        fragments: list[tuple[str, str]] = []
-        prefix = "class:panel-selected-wave-" if selected else "class:panel-active-wave-"
-        baseline = 3 if selected else 2
-        for position in range(animated_width):
-            distance = abs(((position - phase + cycle // 2) % cycle) - cycle // 2)
-            wave_brightness = max(0, 4 - distance)
-            # The amplitude falls to zero at the cutoff, so character eight
-            # already has the static gray and the rest of the row is seamless.
-            taper = (
-                (animated_width - position - 1) / max(1, animated_width - 1)
-            )
-            brightness = int(round(baseline + (wave_brightness - baseline) * taper))
-            fragments.append((prefix + str(brightness), line[position: position + 1]))
-        if animated_width < len(line):
-            fragments.append(
-                (
-                    "class:panel-selected-wave-3" if selected else "class:panel-active",
-                    line[animated_width:],
-                )
-            )
-        return fragments
-
-    @staticmethod
     def _status_indicator(status: Any) -> str:
         normalized = str(status or "").upper()
         if normalized in {"RUNNING", "ACTIVE"}:
-            # Panel data is refreshed at roughly one-second intervals. A
-            # non-multiple of four prevents every refresh from landing on the
-            # same spinner frame, and forces the shimmer lexer to redraw.
-            return ("◐", "◓", "◑", "◒")[int(time.monotonic() * 3) % 4]
+            return "●"
         if normalized in {"QUEUED", "PENDING", "PROPOSED"}:
             return "○"
         if normalized in {"COMPLETED", "SUCCEEDED", "VERIFIED", "PROVEN", "COMPLETE_PROOF_CANDIDATE"}:
@@ -1631,7 +1590,7 @@ class AriadneTUI:
         if not tasks:
             return "No queued tasks yet."
         if self.selected_task is None:
-            self.selected_task = len(tasks) - 1
+            self.selected_task = 0
         self.selected_task = min(self.selected_task, len(tasks) - 1)
         listing = "\n".join(
             ("> " if i == self.selected_task else "  ")
@@ -1646,7 +1605,7 @@ class AriadneTUI:
         if not tasks:
             return "No campaign task is available. Press k to return."
         if self.selected_task is None:
-            self.selected_task = len(tasks) - 1
+            self.selected_task = 0
         self.selected_task = min(self.selected_task, len(tasks) - 1)
         task = tasks[self.selected_task]
         route, claim = self._route_and_claim(task.get("route_id"))
@@ -1692,7 +1651,7 @@ class AriadneTUI:
         if not routes:
             return "No routes declared."
         if self.selected_route is None:
-            self.selected_route = len(routes) - 1
+            self.selected_route = 0
         self.selected_route = min(self.selected_route, len(routes) - 1)
         listing = "\n".join(
             ("> " if i == self.selected_route else "  ")
@@ -1706,7 +1665,7 @@ class AriadneTUI:
         if not routes:
             return "No route is available. Press k to return."
         if self.selected_route is None:
-            self.selected_route = len(routes) - 1
+            self.selected_route = 0
         self.selected_route = min(self.selected_route, len(routes) - 1)
         route = routes[self.selected_route]
         _, claim = self._route_and_claim(route.get("route_id"))
@@ -1744,7 +1703,7 @@ class AriadneTUI:
         if not claims:
             return "No logical claims recorded."
         if self.selected_claim is None:
-            self.selected_claim = len(claims) - 1
+            self.selected_claim = 0
         self.selected_claim = min(max(0, self.selected_claim), len(claims) - 1)
         window_start = max(0, min(self.selected_claim - 6, len(claims) - 7))
         visible = claims[window_start: window_start + 7]
@@ -1788,7 +1747,7 @@ class AriadneTUI:
         if not claims:
             return "No logical claim is available. Press k to return."
         if self.selected_claim is None:
-            self.selected_claim = len(claims) - 1
+            self.selected_claim = 0
         self.selected_claim = min(max(0, self.selected_claim), len(claims) - 1)
         claim = claims[self.selected_claim]
         by_id = {str(item["claim_id"]): item for item in claims}
@@ -1944,7 +1903,7 @@ class AriadneTUI:
         if not items:
             return "No artifacts."
         if self.selected_artifact is None:
-            self.selected_artifact = len(items) - 1
+            self.selected_artifact = 0
         self.selected_artifact = min(self.selected_artifact, len(items) - 1)
         listing = "\n".join(
             ("> " if i == self.selected_artifact else "  ")
@@ -1959,7 +1918,7 @@ class AriadneTUI:
         if not items:
             return "No artifacts. Press k to return."
         if self.selected_artifact is None:
-            self.selected_artifact = len(items) - 1
+            self.selected_artifact = 0
         self.selected_artifact = min(self.selected_artifact, len(items) - 1)
         selected = items[self.selected_artifact]
         raw_preview = ""
@@ -2179,7 +2138,7 @@ class AriadneTUI:
                 else ""
             )
             status = f"Setup running: {role}{elapsed}"
-        legend = "◐ work  ○ queued  ✓ done  × failed  Ⅱ paused  ! blocked/budget"
+        legend = "● work  ○ queued  ✓ done  × failed  Ⅱ paused  ! blocked/budget"
         return (
             f" {legend} "
             f"• {status} "

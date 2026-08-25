@@ -1161,7 +1161,7 @@ class ResearchStore:
 
     def list_claims(self) -> list[dict[str, Any]]:
         with self.transaction() as conn:
-            rows = conn.execute("SELECT * FROM claims ORDER BY created_at").fetchall()
+            rows = conn.execute("SELECT * FROM claims ORDER BY created_at DESC").fetchall()
         result = []
         for row in rows:
             item = dict(row)
@@ -1270,7 +1270,7 @@ class ResearchStore:
             params.append(RouteStatus.ACTIVE)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
-        query += " ORDER BY created_at"
+        query += " ORDER BY created_at DESC"
         with self.transaction() as conn:
             rows = conn.execute(query, params).fetchall()
         result = []
@@ -1515,7 +1515,7 @@ class ResearchStore:
     def list_failures(self) -> list[dict[str, Any]]:
         with self.transaction() as conn:
             rows = conn.execute(
-                "SELECT * FROM failure_clusters ORDER BY attempts_count DESC, created_at"
+                "SELECT * FROM failure_clusters ORDER BY updated_at DESC, attempts_count DESC"
             ).fetchall()
         return [dict(row) for row in rows]
 
