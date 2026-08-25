@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -1413,6 +1414,45 @@ class ResearchStore:
             item["assumptions"] = json.loads(item.pop("assumptions_json"))
             result.append(item)
         return result
+
+    def select_literature_sources(
+        self, *, query: str, limit: int = 12
+    ) -> list[dict[str, Any]]:
+        # Preserve complete access for small dossiers. Larger dossiers are
+        # ranked per route, rather than blindly sharing the newest sources.
+        sources = self.list_literature_sources()
+        if limit <= 0:
+            return []
+        if len(sources) <= limit:
+            return sources
+        terms = {
+            token
+            for token in re.findall(r"[a-z0-9]{3,}", query.casefold())
+            if token not in {"the", "and", "for", "with", "from", "that", "this"}
+        }
+
+        def score(source: dict[str, Any]) -> int:
+            haystack = " ".join(
+                [
+                    str(source.get("title", "")),
+                    str(source.get("citation", "")),
+                    str(source.get("exact_statement", "")),
+                    " ".join(str(item) for item in source.get("assumptions", [])),
+                    str(source.get("locator", "")),
+                ]
+            ).casefold()
+            counts = {
+                token: len(re.findall(r"(?<![a-z0-9])" + re.escape(token) + r"(?![a-z0-9])", haystack))
+                for token in terms
+            }
+            return sum(counts.values()) + 3 * sum(value > 0 for value in counts.values())
+
+        ranked = sorted(
+            enumerate(sources),
+            key=lambda pair: (score(pair[1]), pair[0]),
+            reverse=True,
+        )
+        return [source for _, source in ranked[:limit]]
 
     def add_intervention(
         self,

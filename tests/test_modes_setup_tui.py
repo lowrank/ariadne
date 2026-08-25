@@ -7,6 +7,7 @@ from unittest import mock
 from pathlib import Path
 
 from ariadne_math.config import load_config
+from ariadne_math.enums import RouteMode
 from ariadne_math.cli import main as cli_main
 from ariadne_math.contracts import CONTRACT_TEMPLATE
 from ariadne_math.controller import CampaignController
@@ -1378,6 +1379,62 @@ class ModeSetupTuiTests(unittest.TestCase):
             if item["artifact_id"] == partial_result[0]["artifact_id"]
         )
         self.assertIn("Statement: The exact identity holds", tui._artifact_preview_text())
+
+    def test_route_roundtable_shares_only_complementary_route_state(self) -> None:
+        config = load_config(self._config("offline_only", offline=1))
+        controller = CampaignController(self.root, config)
+        campaign_id = self.store.create_campaign(
+            mode="offline_only", max_epochs=2, max_calls=10, max_cost_usd=2.0
+        )
+        root_claim_id = controller._ensure_root_claim(controller._load_contract())
+
+        def add_route(title: str, representation: str, lemma: str) -> str:
+            return self.store.add_route(
+                campaign_id=campaign_id,
+                title=title,
+                target_claim_id=root_claim_id,
+                mode=RouteMode.DEDUCTIVE,
+                method_family="harmonic analysis",
+                representation=representation,
+                key_lemma=lemma,
+                central_mechanism=(
+                    "frequency localization"
+                    if representation == "Fourier frequency space"
+                    else "geometric separation"
+                ),
+                decisive_test=(
+                    "prove the transfer estimate"
+                    if representation == "Fourier frequency space"
+                    else "prove the separation bound"
+                ),
+                difference_from_existing=title,
+                fingerprint=title,
+                independence_cluster=title,
+                owner_slot=title,
+            )
+
+        route_a = add_route("Frequency decomposition", "Fourier frequency space", "localized multiplier estimate")
+        route_b = add_route("Transfer bridge", "Fourier frequency space", "transfer multiplier estimate")
+        add_route("Geometric alternative", "convex geometry", "separation estimate")
+        self.store.add_attempt(
+            campaign_id=campaign_id,
+            route_id=route_b,
+            epoch=1,
+            agent_slot="route-b",
+            task="establish transfer",
+            result_kind="PROGRESS",
+            summary="A partial multiplier estimate is retained for the bridge.",
+            artifact_id=None,
+            decisive_event=False,
+            cost_usd=0.0,
+            usage={},
+        )
+        packet = controller._route_roundtable(
+            campaign_id=campaign_id, route=self.store.get_route(route_a)
+        )
+        self.assertEqual([item["route_id"] for item in packet], [route_b])
+        self.assertEqual(packet[0]["roundtable_basis"], "shared representation")
+        self.assertEqual(packet[0]["recent_results"][0]["result_kind"], "PROGRESS")
 
     def test_task_route_and_failure_panels_use_compact_lists_and_detail_previews(self) -> None:
         config_path = self._config("offline_only", offline=1)

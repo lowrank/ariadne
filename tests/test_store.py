@@ -288,6 +288,30 @@ class StoreTests(unittest.TestCase):
             run = store.list_agent_runs(campaign)[0]
             self.assertEqual(run["cost_usd"], 4.6)
 
+    def test_literature_selection_keeps_small_dossier_and_ranks_large_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ResearchStore(Path(tmp))
+            for index in range(13):
+                keyword = "Fourier multiplier oscillation" if index == 0 else f"unrelated combinatorics topic {index}"
+                store.add_literature_source(
+                    title=f"{keyword} source {index}",
+                    citation=f"Ref {index}",
+                    source_kind="article",
+                    exact_statement=f"A theorem about {keyword}.",
+                    assumptions=[],
+                    locator=f"Thm {index}",
+                    relative_path=f".ariadne/literature/source-{index}.md",
+                )
+            all_sources = store.select_literature_sources(
+                query="anything", limit=20
+            )
+            self.assertEqual(len(all_sources), 13)
+            selected = store.select_literature_sources(
+                query="Fourier multiplier oscillation", limit=12
+            )
+            self.assertEqual(len(selected), 12)
+            self.assertEqual(selected[0]["title"], "Fourier multiplier oscillation source 0")
+
     def test_agent_exposes_recent_artifacts_to_provider_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

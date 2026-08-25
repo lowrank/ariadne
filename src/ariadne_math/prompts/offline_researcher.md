@@ -50,6 +50,8 @@ A counterexample reported by a reference is only a lead: set its origin to `REFE
 
 The controller supplies a compact work packet to conserve context. Artifact IDs and relative paths are durable references: inspect the exact local artifact only when a load-bearing detail is required, and never infer omitted details from the excerpt.
 
+If project_state.route_roundtable is nonempty, it is a bounded exchange with complementary active routes. Use it only to test an explicit interface, transfer an exact lemma after checking it, or identify an incompatibility; do not merge routes or assume another route's conclusions.
+
 
 {project_state}
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -637,7 +638,16 @@ class CampaignController:
             campaign_id=campaign_id,
             literature_guided=literature_guided,
         )
-        dossier = self._compact_literature_dossier() if literature_guided else []
+        dossier = (
+            self._compact_literature_dossier(
+                query=self._route_context_text({
+                    "title": str(root_claim.get("statement", "")),
+                    "key_lemma": str(contract.get("statement", "")),
+                })
+            )
+            if literature_guided
+            else []
+        )
         calls: list[AgentCall] = []
 
         if not self.store.list_routes(campaign_id):
@@ -707,8 +717,21 @@ class CampaignController:
                     problem_contract=json.dumps(contract, indent=2),
                     root_claim=json.dumps(root_claim, indent=2),
                     route_state=json.dumps(route, indent=2),
-                    project_state=json.dumps(project_state, indent=2),
-                    literature=json.dumps(dossier, indent=2),
+                    project_state=json.dumps(
+                        {
+                            **project_state,
+                            "route_roundtable": self._route_roundtable(
+                                campaign_id=campaign_id, route=route
+                            ),
+                        },
+                        indent=2,
+                    ),
+                    literature=json.dumps(
+                        self._compact_literature_dossier(
+                            query=self._route_context_text(route)
+                        ),
+                        indent=2,
+                    ),
                 )
             else:
                 prompt = render_prompt(
@@ -2716,11 +2739,103 @@ class CampaignController:
             ),
         }
 
-    def _compact_literature_dossier(self) -> list[dict[str, Any]]:
-        """Return a bounded source index with enough exact text to route research."""
+    @staticmethod
+    def _route_context_text(route: dict[str, Any]) -> str:
+        return " ".join(
+            str(route.get(field, ""))
+            for field in (
+                "title",
+                "method_family",
+                "representation",
+                "key_lemma",
+                "central_mechanism",
+                "decisive_test",
+            )
+        )
+
+    def _route_roundtable(
+        self, *, campaign_id: str, route: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        # A compact roundtable packet is shared only when routes have a concrete interface.
+        # It carries results and artifact pointers, never another agent's raw
+        # conversation or private reasoning.
+        generic_terms = {
+            "analysis", "central", "decisive", "estimate", "family", "harmonic", "lemma",
+            "mechanism", "method", "proof", "prove", "representation", "route",
+            "space", "test", "theorem", "transfer",
+        }
+        terms = {
+            token
+            for token in re.findall(r"[a-z0-9]{3,}", self._route_context_text(route).casefold())
+            if token not in generic_terms
+        }
+        peers: list[tuple[int, dict[str, Any], list[str], bool]] = []
+        attempts = self.store.list_attempts()
+        for other in self.store.list_routes(campaign_id, active_only=True):
+            if str(other["route_id"]) == str(route["route_id"]):
+                continue
+            other_terms = {
+                token
+                for token in re.findall(
+                    r"[a-z0-9]{3,}", self._route_context_text(other).casefold()
+                )
+                if token not in generic_terms
+            }
+            overlap = sorted(terms & other_terms)
+            same_representation = (
+                str(route.get("representation", "")).strip().casefold()
+                == str(other.get("representation", "")).strip().casefold()
+                and bool(str(route.get("representation", "")).strip())
+            )
+            if not same_representation and len(overlap) < 2:
+                continue
+            score = len(overlap) + (3 if same_representation else 0)
+            peers.append((score, other, overlap, same_representation))
+        packet: list[dict[str, Any]] = []
+        for _, other, overlap, same_representation in sorted(
+            peers, key=lambda item: (item[0], str(item[1]["route_id"])), reverse=True
+        )[:3]:
+            recent = [
+                attempt
+                for attempt in attempts
+                if str(attempt.get("route_id")) == str(other["route_id"])
+            ][-2:]
+            packet.append(
+                {
+                    "route_id": other["route_id"],
+                    "title": self._context_text(other.get("title"), 240),
+                    "method_family": self._context_text(other.get("method_family"), 240),
+                    "representation": self._context_text(other.get("representation"), 240),
+                    "key_lemma": self._context_text(other.get("key_lemma"), 420),
+                    "central_mechanism": self._context_text(other.get("central_mechanism"), 420),
+                    "decisive_test": self._context_text(other.get("decisive_test"), 420),
+                    "roundtable_basis": (
+                        "shared representation"
+                        if same_representation
+                        else "shared terms: " + ", ".join(overlap[:8])
+                    ),
+                    "recent_results": [
+                        {
+                            "result_kind": item.get("result_kind"),
+                            "summary": self._context_text(item.get("summary"), 700),
+                            "artifact_id": item.get("artifact_id"),
+                        }
+                        for item in recent
+                    ],
+                    "instruction": (
+                        "Use this only to test a concrete interface, transfer a lemma, "
+                        "or rule out an incompatibility. Do not merge routes or assume its claims."
+                    ),
+                }
+            )
+        return packet
+
+    def _compact_literature_dossier(self, *, query: str = "") -> list[dict[str, Any]]:
+        # All sources remain visible when the dossier is small. Beyond the cap,
+        # select sources matched to this role's current route.
         dossier: list[dict[str, Any]] = []
         remaining = 30000
-        for source in self.store.list_literature_sources()[-12:]:
+        for source in self.store.select_literature_sources(query=query, limit=12):
             if remaining <= 0:
                 break
             item = {

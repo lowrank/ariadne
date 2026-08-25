@@ -308,7 +308,24 @@ class AgentRunner:
                 continue
             add(artifact, str(artifact.get("artifact_id", "")))
         if call.role in literature_roles:
-            for source in self.store.list_literature_sources()[-12:]:
+            query = call.prompt
+            if call.route_id:
+                try:
+                    route = self.store.get_route(call.route_id)
+                    query = " ".join(
+                        str(route.get(field, ""))
+                        for field in (
+                            "title",
+                            "method_family",
+                            "representation",
+                            "key_lemma",
+                            "central_mechanism",
+                            "decisive_test",
+                        )
+                    )
+                except KeyError:
+                    pass
+            for source in self.store.select_literature_sources(query=query, limit=12):
                 add(
                     {
                         "kind": "literature_source",
