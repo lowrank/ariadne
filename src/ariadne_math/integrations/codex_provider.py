@@ -18,6 +18,7 @@ ROLE_SCHEMAS = {
     "offline_researcher": "offline_researcher.json",
     "literature_researcher": "literature_researcher.json",
     "contract_author": "contract_author.json",
+    "contract_resolver": "contract_resolver.json",
     "literature_author": "literature_author.json",
     "intervention_responder": "intervention_responder.json",
     "literature_sentinel": "literature_sentinel.json",
@@ -35,6 +36,7 @@ DEFAULT_EFFORT = {
     "offline_researcher": "xhigh",
     "literature_researcher": "xhigh",
     "contract_author": "xhigh",
+    "contract_resolver": "high",
     "literature_author": "high",
     "intervention_responder": "high",
     "literature_sentinel": "high",
@@ -97,7 +99,7 @@ def _web_mode(role: str) -> str:
     # Only explicitly literature-aware roles may be granted web search. Offline
     # research, contract authoring, and verification remain web-disabled even if
     # a provider is misconfigured.
-    if role not in {"literature_sentinel", "literature_researcher", "literature_author", "proof_expander"}:
+    if role not in {"literature_sentinel", "literature_researcher", "literature_author", "contract_resolver", "proof_expander"}:
         return "disabled"
     return requested
 

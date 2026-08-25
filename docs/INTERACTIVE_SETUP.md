@@ -54,7 +54,7 @@ The interview asks for two file groups:
 1. base materials visible to both the route-neutral contract author and the literature author;
 2. additional literature files visible **only** to the separate literature author.
 
-Both groups accept comma-separated `.md`, `.txt`, `.tex`, `.json`, YAML, Python, or PDF paths. Text is excerpted into bounded role prompts. PDFs are extracted through `pypdf`. Missing paths are reported rather than silently ignored. This split prevents later proof routes from contaminating the frozen problem contract.
+Both groups accept comma-separated `.md`, `.txt`, `.tex`, `.json`, YAML, Python, or PDF paths. Text is excerpted into bounded role prompts. PDFs are extracted through `pypdf`. Missing paths are reported rather than silently ignored. This split prevents later proof routes from contaminating the frozen problem contract. If the offline contract author explicitly reports that a named result or reference remains underspecified, a separate web-enabled contract resolver may identify the exact source packet and the offline author then retries; it never gives web access directly to the contract author.
 
 The supplied source bytes are also copied into the project under
 `.ariadne/literature/source-materials/` with content-derived filenames and

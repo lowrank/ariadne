@@ -9,172 +9,179 @@
   ],
   "properties": {
     "problem_contract": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "problem_id",
-        "title",
-        "research_mode",
-        "tags",
-        "statement",
-        "contract_domains_json",
-        "hypotheses",
-        "conclusion",
-        "uniformity",
-        "coefficient_domains",
-        "endpoints",
-        "success_criteria",
-        "allowed_conditionals",
-        "statement_drift_prohibitions",
-        "formalization_policy"
-      ],
-      "properties": {
-        "problem_id": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "tags": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "research_mode": {
-          "type": "string",
-          "enum": [
-            "offline_sentinel",
-            "offline_only",
-            "literature_guided"
-          ]
-        },
-        "statement": {
+      "anyOf": [
+        {
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "text",
-            "formal_quantifier_outline"
+            "problem_id",
+            "title",
+            "research_mode",
+            "tags",
+            "statement",
+            "contract_domains_json",
+            "hypotheses",
+            "conclusion",
+            "uniformity",
+            "coefficient_domains",
+            "endpoints",
+            "success_criteria",
+            "allowed_conditionals",
+            "statement_drift_prohibitions",
+            "formalization_policy"
           ],
           "properties": {
-            "text": {
+            "problem_id": {
               "type": "string"
             },
-            "formal_quantifier_outline": {
+            "title": {
               "type": "string"
-            }
-          }
-        },
-        "hypotheses": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "conclusion": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "uniformity": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "constants_may_depend_on",
-            "constants_may_not_depend_on"
-          ],
-          "properties": {
-            "constants_may_depend_on": {
+            },
+            "tags": {
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
-            "constants_may_not_depend_on": {
-              "type": "array",
-              "items": {
-                "type": "string"
+            "research_mode": {
+              "type": "string",
+              "enum": [
+                "offline_sentinel",
+                "offline_only",
+                "literature_guided"
+              ]
+            },
+            "statement": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "text",
+                "formal_quantifier_outline"
+              ],
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "formal_quantifier_outline": {
+                  "type": "string"
+                }
               }
-            }
-          }
-        },
-        "coefficient_domains": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "endpoints": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "included",
-            "excluded"
-          ],
-          "properties": {
-            "included": {
+            },
+            "hypotheses": {
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
-            "excluded": {
+            "conclusion": {
               "type": "array",
               "items": {
                 "type": "string"
               }
-            }
-          }
-        },
-        "success_criteria": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "proof",
-            "refutation"
-          ],
-          "properties": {
-            "proof": {
-              "type": "string"
             },
-            "refutation": {
-              "type": "string"
-            }
-          }
-        },
-        "allowed_conditionals": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "statement_drift_prohibitions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "formalization_policy": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "lean_allowed_only_after_human_checked_proof",
-            "lean_role"
-          ],
-          "properties": {
-            "lean_allowed_only_after_human_checked_proof": {
-              "type": "boolean"
+            "uniformity": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "constants_may_depend_on",
+                "constants_may_not_depend_on"
+              ],
+              "properties": {
+                "constants_may_depend_on": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "constants_may_not_depend_on": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
             },
-            "lean_role": {
+            "coefficient_domains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "endpoints": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "included",
+                "excluded"
+              ],
+              "properties": {
+                "included": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "excluded": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "success_criteria": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "proof",
+                "refutation"
+              ],
+              "properties": {
+                "proof": {
+                  "type": "string"
+                },
+                "refutation": {
+                  "type": "string"
+                }
+              }
+            },
+            "allowed_conditionals": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "statement_drift_prohibitions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "formalization_policy": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "lean_allowed_only_after_human_checked_proof",
+                "lean_role"
+              ],
+              "properties": {
+                "lean_allowed_only_after_human_checked_proof": {
+                  "type": "boolean"
+                },
+                "lean_role": {
+                  "type": "string"
+                }
+              }
+            },
+            "contract_domains_json": {
               "type": "string"
             }
           }
         },
-        "contract_domains_json": {
-          "type": "string"
+        {
+          "type": "null"
         }
-      }
+      ]
     },
     "validation_notes": {
       "type": "array",

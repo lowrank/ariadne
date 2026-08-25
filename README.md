@@ -72,7 +72,7 @@ contract-author      -> .ariadne/problem_contract.json
 literature-author    -> hidden sentinel / parked dossier / shared dossier
 ```
 
-The contract author is web-disabled. The literature author is separate and can be granted live web search.
+The contract author is web-disabled. If it explicitly cannot fix an underspecified problem from the owner material, Ariadne may call the separate web-enabled `contract_resolver` (only with live literature enabled), then retries the offline author with its auditable source packet. The literature author remains separate for the later dossier.
 Owner-supplied source files are copied into the durable project dossier with
 content-derived names; only bounded excerpts and basenames are sent to the
 contract author.

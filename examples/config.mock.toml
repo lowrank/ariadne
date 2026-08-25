@@ -32,6 +32,10 @@ network_policy = "allow"
 provider = "mock"
 network_policy = "deny"
 
+[roles.contract_resolver]
+provider = "mock"
+network_policy = "allow"
+
 [roles.literature_author]
 provider = "mock"
 network_policy = "allow"

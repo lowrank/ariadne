@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ariadne contract-resolution response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["resolution"],
+  "properties": {
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "title", "citation", "version", "locator", "exact_statement", "hypotheses", "endpoints", "warnings"],
+      "properties": {
+        "status": {"type": "string", "enum": ["RESOLVED", "UNRESOLVED"]},
+        "title": {"type": "string"},
+        "citation": {"type": "string"},
+        "version": {"type": "string"},
+        "locator": {"type": "string"},
+        "exact_statement": {"type": "string"},
+        "hypotheses": {"type": "array", "items": {"type": "string"}},
+        "endpoints": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

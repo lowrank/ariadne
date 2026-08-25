@@ -50,6 +50,10 @@ network_policy = "allow"
 provider = "offline_cli"
 network_policy = "deny"
 
+[roles.contract_resolver]
+provider = "literature_cli"
+network_policy = "allow"
+
 [roles.literature_author]
 provider = "literature_cli"
 network_policy = "allow"

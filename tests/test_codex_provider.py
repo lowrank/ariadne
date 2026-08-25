@@ -371,6 +371,7 @@ network_policy = "deny"
             "offline_researcher.json",
             "literature_researcher.json",
             "contract_author.json",
+            "contract_resolver.json",
             "literature_author.json",
             "intervention_responder.json",
             "literature_sentinel.json",
@@ -416,6 +417,18 @@ network_policy = "deny"
         }, clear=False):
             with self.assertRaisesRegex(RuntimeError, "network tools require"):
                 _network_guard()
+        with patch.dict(os.environ, {
+            "ARIADNE_ROLE": "contract_resolver",
+            "ARIADNE_NETWORK_POLICY": "allow",
+            "ARIADNE_CODEX_WEB_SEARCH": "live",
+        }, clear=False):
+            self.assertEqual(_web_mode("contract_resolver"), "live")
+        with patch.dict(os.environ, {
+            "ARIADNE_ROLE": "contract_author",
+            "ARIADNE_NETWORK_POLICY": "allow",
+            "ARIADNE_CODEX_WEB_SEARCH": "live",
+        }, clear=False):
+            self.assertEqual(_web_mode("contract_author"), "disabled")
 
 
 if __name__ == "__main__":

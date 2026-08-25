@@ -493,7 +493,10 @@ def write_unsolved_campaign_note(store: ResearchStore, *, campaign_id: str) -> t
         campaign = store.get_campaign(campaign_id)
     except KeyError:
         return None
-    if str(campaign.get("status")) != CampaignStatus.COMPLETED_UNSOLVED or int(campaign.get("epoch", 0)) < int(campaign.get("max_epochs", 0)):
+    if str(campaign.get("status")) not in {
+        CampaignStatus.COMPLETED_UNSOLVED,
+        CampaignStatus.BUDGET_EXHAUSTED,
+    }:
         return None
     root_id = store.get_meta("root_claim_id")
     if not root_id:
@@ -550,13 +553,13 @@ def write_unsolved_campaign_note(store: ResearchStore, *, campaign_id: str) -> t
 \\usepackage[T1]{{fontenc}}
 \\usepackage{{lmodern}}
 \\usepackage{{hyperref}}
-\\title{{Unsolved Campaign Research Record}}
+\\title{{Unresolved Campaign Research Record}}
 \\author{{Ariadne Mathematical Research Harness}}
 \\date{{{_latex_escape(utc_now())}}}
 \\begin{{document}}
 \\maketitle
 \\begin{{center}}
-\\fbox{{\\parbox{{0.90\\textwidth}}{{\\centering\\bfseries UNSOLVED AFTER THE CONFIGURED EPOCH BOUND\\\\
+\\fbox{{\\parbox{{0.90\\textwidth}}{{\\centering\\bfseries UNRESOLVED CAMPAIGN HANDOFF\\\\
 This note is a research record. Failed routes and unverified evidence do not refute the stated proposition.}}}}
 \\end{{center}}
 \\section{{Problem}}
@@ -590,7 +593,7 @@ This note is a research record. Failed routes and unverified evidence do not ref
 {synthesis_latex}
 \\end{{itemize}}
 \\section{{Conclusion and future work}}
-The configured epoch bound was reached without a complete proof or an independently audited exact counterexample. This record preserves the attempted routes, their bounded outcomes, and conditions under which a future campaign may revisit them. A continuation must preserve the immutable problem contract and target a recorded remaining obligation or genuinely new route.
+The campaign ended without a complete proof or an independently audited exact counterexample. This record preserves the attempted routes, their bounded outcomes, and conditions under which a future campaign may revisit them. A continuation must preserve the immutable problem contract and target a recorded remaining obligation or genuinely new route.
 \\end{{document}}
 '''
     tex_path.write_text(tex, encoding="utf-8")

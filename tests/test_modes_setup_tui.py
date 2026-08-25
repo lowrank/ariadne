@@ -62,6 +62,10 @@ network_policy = \"allow\"
 provider = \"mock\"
 network_policy = \"deny\"
 
+[roles.contract_resolver]
+provider = \"mock\"
+network_policy = \"allow\"
+
 [roles.literature_author]
 provider = \"mock\"
 network_policy = \"allow\"
@@ -510,6 +514,16 @@ class ModeSetupTuiTests(unittest.TestCase):
             "".join(str(call) for call in stderr.write.call_args_list),
         )
 
+    def test_budget_exhausted_campaign_writes_unresolved_handoff(self) -> None:
+        config_path = self._config("offline_only", offline=1)
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace("max_cost_usd = 1.0", "max_cost_usd = 0.0", 1),
+            encoding="utf-8",
+        )
+        result = CampaignController(self.root, load_config(config_path)).run()
+        self.assertEqual(result["status"], "BUDGET_EXHAUSTED")
+        self.assertEqual(len(self.store.list_artifacts(kind="unsolved_campaign_note_latex")), 1)
+
     def test_final_unsolved_campaign_writes_journal_research_record(self) -> None:
         config = load_config(self._config("offline_only", offline=1))
         controller = CampaignController(self.root, config)
@@ -540,7 +554,7 @@ class ModeSetupTuiTests(unittest.TestCase):
         notes = self.store.list_artifacts(kind="unsolved_campaign_note_latex")
         self.assertEqual(len(notes), 1)
         note = (self.root / notes[0]["relative_path"]).read_text(encoding="utf-8")
-        self.assertIn("Unsolved Campaign Research Record", note)
+        self.assertIn("Unresolved Campaign Research Record", note)
         self.assertIn("Unclosed route", note)
         self.assertIn("supply the missing bridge", note)
         self.assertTrue(any(
@@ -1073,6 +1087,58 @@ class ModeSetupTuiTests(unittest.TestCase):
         self.assertEqual(len(preserved), 2)
         self.assertEqual(len(result["preserved_base_source_ids"]), 1)
         self.assertEqual(len(result["preserved_literature_source_ids"]), 1)
+
+    def test_setup_uses_contract_resolver_only_after_offline_author_requests_it(self) -> None:
+        config_path = self._config("literature_guided", research=1)
+        answers = SetupAnswers(
+            title="Agent-generated title",
+            statement="Improve the named classical result.",
+            objective="Fix the exact target before research.",
+            hypotheses_and_domains="Use the cited source formulation.",
+            uniformity_and_endpoints="Keep every endpoint from the source.",
+            exclusions_and_statement_drift="Do not guess a nearby theorem.",
+            proof_success="A complete proof of the resolved target.",
+            refutation_success="An exact counterexample to the resolved target.",
+            base_source_references="A named but underspecified result",
+            source_files=(),
+            research_mode="literature_guided",
+            researcher_count=1,
+            parallel=True,
+            allow_live_literature=True,
+            literature_instructions="Use exact locators.",
+            use_git=False,
+        )
+        contract = json.loads(self.store.paths.contract.read_text(encoding="utf-8"))
+        contract["title"] = "Resolved result"
+        contract["statement"] = {
+            "text": "For every admissible X, the resolved conclusion holds.",
+            "formal_quantifier_outline": "forall X, admissible(X) -> conclusion(X)",
+        }
+        unresolved = mock.Mock(text=json.dumps({
+            "problem_contract": None,
+            "validation_notes": ["CONTRACT_RESOLUTION_REQUIRED: named result is ambiguous"],
+        }))
+        resolver = mock.Mock(text=json.dumps({"resolution": {
+            "status": "RESOLVED", "title": "Resolved result", "citation": "Author, paper v1",
+            "version": "v1", "locator": "Theorem 2.1", "exact_statement": contract["statement"]["text"],
+            "hypotheses": ["X is admissible"], "endpoints": ["all admissible X"], "warnings": [],
+        }}))
+        retry = mock.Mock(text=json.dumps({"problem_contract": contract, "validation_notes": []}))
+        literature = mock.Mock(text=json.dumps({
+            "document_type": "shared_literature_dossier", "markdown": "# Dossier\n\nResolved source.",
+            "sources": [], "warnings": [],
+        }))
+        with mock.patch("ariadne_math.setup_wizard._cache_cited_open_pdfs", return_value=[]), mock.patch(
+            "ariadne_math.setup_wizard.AgentRunner.call",
+            side_effect=[unresolved, resolver, retry, literature],
+        ) as call:
+            generate_setup(project_root=self.root, config_path=config_path, answers=answers)
+        self.assertEqual([item.args[0].role for item in call.call_args_list], [
+            "contract_author", "contract_resolver", "contract_author", "literature_author",
+        ])
+        resolutions = self.store.list_artifacts(kind="contract_resolution")
+        self.assertEqual(len(resolutions), 1)
+        self.assertEqual(json.loads((self.root / resolutions[0]["relative_path"]).read_text())["locator"], "Theorem 2.1")
 
     def test_tutorial_and_requirements_cover_supported_environment(self) -> None:
         repository_root = Path(__file__).resolve().parents[1]

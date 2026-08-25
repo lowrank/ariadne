@@ -15,6 +15,10 @@ The contract must prevent statement drift, hidden parameter dependence, numerica
 
 {source_excerpts}
 
+# Optional contract-resolution packet
+
+{contract_resolution}
+
 # Required behavior
 
 - Preserve every quantifier, domain, endpoint, uniformity condition, and coefficient field supplied by the owner.
@@ -24,5 +28,6 @@ The contract must prevent statement drift, hidden parameter dependence, numerica
 - Allow only route-neutral audited baseline facts from the supplied base source.
 - Set `formalization_policy.lean_allowed_only_after_human_checked_proof` to true.
 - Use empty arrays or objects when a field is not applicable rather than inventing facts.
+- If the owner has supplied only an ambiguous name or reference and the supplied materials cannot fix the exact target, return `problem_contract: null` and explain the missing identifying facts in `validation_notes` beginning with `CONTRACT_RESOLUTION_REQUIRED:`. Never guess.
 
 Return one JSON object with keys `problem_contract` and `validation_notes`.

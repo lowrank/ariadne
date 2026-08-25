@@ -502,6 +502,7 @@ def update_runtime_config(path: Path, answers: SetupAnswers) -> None:
     literature_providers = {
         existing.roles[role].provider
         for role in (
+            "contract_resolver",
             "literature_author",
             "literature_researcher",
             "literature_sentinel",
@@ -663,6 +664,30 @@ def generate_setup(
         )
         store.record_artifact(answers_artifact)
 
+        def parse_contract_response(response_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
+            payload = extract_json_object(response_text)
+            contract_candidate = payload.get("problem_contract")
+            if not isinstance(contract_candidate, dict):
+                notes = payload.get("validation_notes", [])
+                detail = "; ".join(str(item) for item in notes if str(item).strip())
+                raise ValueError(detail or "Contract author did not return a problem_contract object")
+            if "problem_definitions" in contract_candidate and "definitions" not in contract_candidate:
+                contract_candidate["definitions"] = contract_candidate.pop("problem_definitions")
+            if "contract_domains_json" in contract_candidate and "domains" not in contract_candidate:
+                raw_domains = contract_candidate.pop("contract_domains_json")
+                try:
+                    parsed_domains = json.loads(raw_domains)
+                except (TypeError, json.JSONDecodeError):
+                    parsed_domains = {}
+                contract_candidate["domains"] = parsed_domains if isinstance(parsed_domains, dict) else {}
+            contract_candidate.setdefault("tags", [])
+            if not isinstance(contract_candidate["tags"], list):
+                contract_candidate["tags"] = []
+            contract_candidate["tags"] = [str(tag) for tag in contract_candidate["tags"] if str(tag).strip()]
+            contract_candidate["research_mode"] = answers.research_mode
+            validate_contract(contract_candidate)
+            return payload, contract_candidate
+
         reporter.emit(
             "contract_author_stage",
             "Launching the web-disabled contract-author role on the owner interview and base materials.",
@@ -671,6 +696,7 @@ def generate_setup(
             "contract_author.md",
             setup_answers=json.dumps(asdict(answers), ensure_ascii=False, indent=2),
             source_excerpts=base_source_excerpts,
+            contract_resolution="{}",
         )
         contract_response = runner.call(
             AgentCall(
@@ -684,26 +710,70 @@ def generate_setup(
                 },
             )
         )
-        contract_payload = extract_json_object(contract_response.text)
-        contract = contract_payload.get("problem_contract")
-        if not isinstance(contract, dict):
-            raise ValueError("Contract author did not return a problem_contract object")
-        # Accept a legacy wire name if an older provider returns one.
-        if "problem_definitions" in contract and "definitions" not in contract:
-            contract["definitions"] = contract.pop("problem_definitions")
-        if "contract_domains_json" in contract and "domains" not in contract:
-            raw_domains = contract.pop("contract_domains_json")
-            try:
-                parsed_domains = json.loads(raw_domains)
-            except (TypeError, json.JSONDecodeError):
-                parsed_domains = {}
-            contract["domains"] = parsed_domains if isinstance(parsed_domains, dict) else {}
-        contract.setdefault("tags", [])
-        if not isinstance(contract["tags"], list):
-            contract["tags"] = []
-        contract["tags"] = [str(tag) for tag in contract["tags"] if str(tag).strip()]
-        contract["research_mode"] = answers.research_mode
-        validate_contract(contract)
+        try:
+            contract_payload, contract = parse_contract_response(contract_response.text)
+        except ValueError as contract_error:
+            if not answers.allow_live_literature or "contract_resolver" not in config.roles:
+                raise ValueError(
+                    f"Offline contract setup needs more identifying information: {contract_error}. "
+                    "Supply a statement/source file or enable live literature so contract resolution can run."
+                ) from contract_error
+            reporter.emit(
+                "contract_resolution_required",
+                "Offline contract author could not identify the target; launching the separate web-enabled contract resolver.",
+                reason=str(contract_error),
+            )
+            resolver_prompt = render_prompt(
+                "contract_resolver.md",
+                setup_answers=json.dumps(asdict(answers), ensure_ascii=False, indent=2),
+                source_excerpts=base_source_excerpts,
+            )
+            resolver_response = runner.call(
+                AgentCall(
+                    role="contract_resolver",
+                    slot="contract-resolver",
+                    prompt=resolver_prompt,
+                    project_root=store.paths.root,
+                    network_policy=config.roles["contract_resolver"].network_policy,
+                    metadata={"task_summary": "Resolve an underspecified problem reference for an offline contract-author retry"},
+                )
+            )
+            resolver_payload = extract_json_object(resolver_response.text)
+            resolution = resolver_payload.get("resolution")
+            if not isinstance(resolution, dict) or str(resolution.get("status", "")) != "RESOLVED":
+                raise ValueError(
+                    "Contract resolver could not fix an exact target; provide a source file or a more specific statement."
+                ) from contract_error
+            resolution_artifact = artifacts.put_text(
+                json.dumps(resolution, ensure_ascii=False, indent=2),
+                kind="contract_resolution",
+                suffix=".json",
+                metadata={"status": "RESOLVED", "fallback_reason": str(contract_error)},
+            )
+            store.record_artifact(resolution_artifact)
+            reporter.emit(
+                "contract_resolution_completed",
+                "Contract resolver supplied an auditable source packet; retrying the offline contract author.",
+                artifact_id=resolution_artifact.artifact_id,
+                locator=str(resolution.get("locator", "")),
+            )
+            retry_prompt = render_prompt(
+                "contract_author.md",
+                setup_answers=json.dumps(asdict(answers), ensure_ascii=False, indent=2),
+                source_excerpts=base_source_excerpts,
+                contract_resolution=json.dumps(resolution, ensure_ascii=False, indent=2),
+            )
+            retry_response = runner.call(
+                AgentCall(
+                    role="contract_author",
+                    slot="contract-author-retry",
+                    prompt=retry_prompt,
+                    project_root=store.paths.root,
+                    network_policy=config.roles["contract_author"].network_policy,
+                    metadata={"task_summary": "Create the exact contract from owner material and the resolved source packet"},
+                )
+            )
+            contract_payload, contract = parse_contract_response(retry_response.text)
         write_json(store.paths.contract, contract)
         store.set_meta(
             "problem_contract_sha256", content_hash(store.paths.contract.read_bytes())

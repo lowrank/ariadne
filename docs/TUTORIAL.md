@@ -284,4 +284,4 @@ For configuration details, see [MODES.md](MODES.md), [TUI.md](TUI.md),
 
 ## Final partial-result synthesis
 
-When the configured epoch bound is reached without resolving the target, Ariadne runs one bounded, web-disabled archival synthesis role. It may retain a precisely scoped, artifact-backed partial result for continuation. If the campaign has no genuinely meaningful partial result, it records that outcome and proposes nothing; it never weakens, proves, or refutes the frozen target by synthesis alone.
+When an epoch bound is reached or the campaign budget is exhausted without resolving the target, Ariadne runs one bounded, web-disabled archival synthesis role whenever remaining budget permits. It may retain a precisely scoped, artifact-backed partial result for continuation. If the campaign has no genuinely meaningful partial result, it records that outcome and proposes nothing; it never weakens, proves, or refutes the frozen target by synthesis alone.

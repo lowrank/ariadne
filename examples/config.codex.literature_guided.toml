@@ -90,6 +90,10 @@ network_policy = "allow"
 provider = "codex_offline"
 network_policy = "deny"
 
+[roles.contract_resolver]
+provider = "codex_literature"
+network_policy = "allow"
+
 [roles.literature_author]
 provider = "codex_literature"
 network_policy = "allow"

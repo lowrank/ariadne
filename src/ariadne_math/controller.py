@@ -388,10 +388,10 @@ class CampaignController:
                     terminal_status = CampaignStatus.COMPLETED_UNSOLVED
             self.store.update_campaign(campaign_id, status=terminal_status)
             result = self.store.get_campaign(campaign_id)
-            if (
-                terminal_status == CampaignStatus.COMPLETED_UNSOLVED
-                and int(result["epoch"]) >= int(result["max_epochs"])
-            ):
+            if terminal_status in {
+                CampaignStatus.COMPLETED_UNSOLVED,
+                CampaignStatus.BUDGET_EXHAUSTED,
+            }:
                 self._synthesize_strongest_partial_result(
                     campaign_id=campaign_id,
                     epoch=int(result["epoch"]),
