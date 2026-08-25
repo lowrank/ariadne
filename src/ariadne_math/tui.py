@@ -284,11 +284,12 @@ class AriadneTUI:
                     upper = line.upper()
                     if line.startswith("> "):
                         return [("class:panel-selected", line)]
-                    if any(token in upper for token in ("FAILED", "ERROR", "CRASHED", "EXCEPTION")):
+                    marker = line.removeprefix("> ").lstrip()[:1]
+                    if marker == "×" or any(token in upper for token in ("FAILED", "ERROR", "CRASHED", "EXCEPTION")):
                         return [("class:panel-failure", line)]
-                    if any(token in upper for token in ("RUNNING", "ACTIVE", "QUEUED", "PENDING")):
+                    if marker in {"◐", "◓", "◑", "◒", "○"} or any(token in upper for token in ("RUNNING", "ACTIVE", "QUEUED", "PENDING")):
                         return [("class:panel-active", line)]
-                    if any(token in upper for token in ("COMPLETED", "VERIFIED", "PROVEN", "SUCCEEDED")):
+                    if marker == "✓" or any(token in upper for token in ("COMPLETED", "VERIFIED", "PROVEN", "SUCCEEDED")):
                         return [("class:panel-success", line)]
                     if any(token in upper for token in ("PAUSED", "NEEDS_HUMAN", "WARNING")):
                         return [("class:panel-warning", line)]
@@ -1384,6 +1385,23 @@ class AriadneTUI:
         text = " ".join(cls._display_value(value).split())
         return text if len(text) <= limit else text[: limit - 1] + "…"
 
+    @staticmethod
+    def _status_indicator(status: Any) -> str:
+        normalized = str(status or "").upper()
+        if normalized in {"RUNNING", "ACTIVE"}:
+            return ("◐", "◓", "◑", "◒")[int(time.monotonic() * 4) % 4]
+        if normalized in {"QUEUED", "PENDING", "PROPOSED"}:
+            return "○"
+        if normalized in {"COMPLETED", "SUCCEEDED", "VERIFIED", "PROVEN", "COMPLETE_PROOF_CANDIDATE"}:
+            return "✓"
+        if normalized in {"FAILED", "ERROR", "CRASHED", "OBSOLETE", "METHOD_FAILED"}:
+            return "×"
+        if normalized in {"PAUSED_HUMAN", "NEEDS_HUMAN_IDEA", "NEEDS_REPRESENTATION_CHANGE"}:
+            return "Ⅱ"
+        if normalized in {"BLOCKED", "STAGNANT", "BUDGET_EXHAUSTED"}:
+            return "!"
+        return "·"
+
     _VISIBLE_ARTIFACT_KINDS = frozenset(
         {
             "structured_research_outcome",
@@ -1451,7 +1469,7 @@ class AriadneTUI:
             setup_runs = self._setup_runs(active_only=True)
             if setup_runs:
                 current = "; ".join(
-                    f"{run['role']} [{run['status']}]: {self._clip(run['task_summary'], 110)}"
+                    f"{self._status_indicator(run.get('status'))} {run['role']}: {self._clip(run['task_summary'], 110)}"
                     for run in setup_runs
                 )
                 return (
@@ -1462,14 +1480,50 @@ class AriadneTUI:
             return f"Project: {project_label}\nTarget: {self._clip(target, 300)}\nCampaign: none"
         active = self.store.list_agent_runs(str(campaign["campaign_id"]), active_only=True)
         current = "; ".join(
-            f"{r['slot']} [{r['role']}] {self._elapsed_label(r.get('started_at'))}: "
-            f"{self._clip(r['task_summary'], 90)}"
-            for r in active
+            self._active_run_label(run)
+            for run in active
         ) or "No agent call active"
         return (
             f"Project: {project_label} | {campaign['campaign_id']} | mode={campaign['mode']} | "
-            f"status={campaign['status']} | epoch={campaign['epoch']}\n"
+            f"state={self._status_indicator(campaign.get('status'))} | epoch={campaign['epoch']}\n"
             f"Target: {self._clip(target, 300)}\nCurrent: {current}"
+        )
+
+    def _route_and_claim(
+        self, route_id: str | None
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        if not route_id:
+            return None, None
+        try:
+            route = self.store.get_route(route_id)
+        except KeyError:
+            return None, None
+        claim_id = route.get("target_claim_id")
+        if not claim_id:
+            return route, None
+        try:
+            return route, self.store.get_claim(str(claim_id))
+        except KeyError:
+            return route, None
+
+    def _route_label(self, route_id: str | None, limit: int = 34) -> str:
+        route, _ = self._route_and_claim(route_id)
+        if route is None:
+            return "unassigned route"
+        return self._clip(route.get("title") or route.get("route_id"), limit)
+
+    def _claim_label(self, route_id: str | None, limit: int = 64) -> str:
+        _, claim = self._route_and_claim(route_id)
+        if claim is None:
+            return "no target claim"
+        return self._clip(claim.get("statement") or claim.get("claim_id"), limit)
+
+    def _active_run_label(self, run: dict[str, Any]) -> str:
+        route = self._route_label(run.get("route_id"), 28)
+        claim = self._claim_label(run.get("route_id"), 56)
+        return (
+            f"{run['slot']} [{run['role']}] → {route} → {claim} "
+            f"{self._elapsed_label(run.get('started_at'))}"
         )
 
     def _tasks_text(self) -> str:
@@ -1478,7 +1532,7 @@ class AriadneTUI:
             setup_runs = self._setup_runs(active_only=True)
             if setup_runs:
                 return "\n".join(
-                    f"{run['status']:<9} {run['role']}"
+                    f"{self._status_indicator(run.get('status')):<2} {run['role']}"
                     for run in setup_runs
                 )
             return "No campaign task queue."
@@ -1490,10 +1544,10 @@ class AriadneTUI:
         self.selected_task = min(self.selected_task, len(tasks) - 1)
         listing = "\n".join(
             ("> " if i == self.selected_task else "  ")
-            + f"{t['status']:<9} {t['slot']} / {t['role']}"
+            + f"{self._status_indicator(t.get('status')):<2} {t['slot']:<14} → {self._route_label(t.get('route_id'), 30)}"
             for i, t in enumerate(tasks)
         )
-        return listing + "\n\n↑/↓ browse  •  j preview"
+        return listing + "\n\n↑/↓ browse  •  j route/claim preview"
 
     def _task_preview_text(self) -> str:
         campaign = self.store.latest_campaign()
@@ -1503,7 +1557,44 @@ class AriadneTUI:
         if self.selected_task is None:
             self.selected_task = len(tasks) - 1
         self.selected_task = min(self.selected_task, len(tasks) - 1)
-        return self._record_preview("Task", tasks[self.selected_task])
+        task = tasks[self.selected_task]
+        route, claim = self._route_and_claim(task.get("route_id"))
+        lines = [
+            "Selected: Task",
+            "",
+            f"Status: {task.get('status', '')}",
+            f"Agent: {task.get('slot', '')} [{task.get('role', '')}]",
+            f"Epoch: {task.get('epoch', '')}",
+            f"Summary: {task.get('summary', '')}",
+            "",
+            "Route:",
+        ]
+        if route is None:
+            lines.append("  No route assigned.")
+        else:
+            lines.extend(
+                [
+                    f"  ID: {route.get('route_id', '')}",
+                    f"  Title: {route.get('title', '')}",
+                    f"  Status: {route.get('status', '')}",
+                    f"  Method: {route.get('method_family', '')}",
+                    f"  Representation: {route.get('representation', '')}",
+                    f"  Key lemma: {route.get('key_lemma', '')}",
+                ]
+            )
+        lines.extend(["", "Target claim:"])
+        if claim is None:
+            lines.append("  No target claim recorded.")
+        else:
+            lines.extend(
+                [
+                    f"  ID: {claim.get('claim_id', '')}",
+                    f"  Status: {claim.get('status', '')}",
+                    f"  Statement: {claim.get('statement', '')}",
+                ]
+            )
+        lines.append("\nPress k or Esc to return to the list.")
+        return "\n".join(lines)
 
     def _routes_text(self) -> str:
         routes = self.store.list_routes()
@@ -1514,10 +1605,10 @@ class AriadneTUI:
         self.selected_route = min(self.selected_route, len(routes) - 1)
         listing = "\n".join(
             ("> " if i == self.selected_route else "  ")
-            + f"{r['status']:<28} {r['route_id']} / {self._clip(r['title'], 42)}"
+            + f"{self._status_indicator(r.get('status')):<2} {self._clip(r['title'], 38)}"
             for i, r in enumerate(routes)
         )
-        return listing + "\n\n↑/↓ browse  •  j preview"
+        return listing + "\n\n↑/↓ browse  •  j route/claim preview"
 
     def _route_preview_text(self) -> str:
         routes = self.store.list_routes()
@@ -1526,19 +1617,47 @@ class AriadneTUI:
         if self.selected_route is None:
             self.selected_route = len(routes) - 1
         self.selected_route = min(self.selected_route, len(routes) - 1)
-        return self._record_preview("Route", routes[self.selected_route])
+        route = routes[self.selected_route]
+        _, claim = self._route_and_claim(route.get("route_id"))
+        lines = [
+            "Selected: Route",
+            "",
+            f"ID: {route.get('route_id', '')}",
+            f"Title: {route.get('title', '')}",
+            f"Status: {route.get('status', '')}",
+            f"Owner agent: {route.get('owner_slot', '')}",
+            f"Method: {route.get('method_family', '')}",
+            f"Representation: {route.get('representation', '')}",
+            f"Key lemma: {route.get('key_lemma', '')}",
+            f"Central mechanism: {route.get('central_mechanism', '')}",
+            f"Decisive test: {route.get('decisive_test', '')}",
+            "",
+            "Target claim:",
+        ]
+        if claim is None:
+            lines.append("  No target claim recorded.")
+        else:
+            lines.extend(
+                [
+                    f"  ID: {claim.get('claim_id', '')}",
+                    f"  Status: {claim.get('status', '')}",
+                    f"  Statement: {claim.get('statement', '')}",
+                ]
+            )
+        lines.append("\nPress k or Esc to return to the list.")
+        return "\n".join(lines)
 
     def _claims_text(self) -> str:
         claims = self.store.list_claims()
         attempts = self.store.list_attempts()
         lines = [
-            f"{c['status']:<22} {c['claim_id']}"
+            f"{self._status_indicator(c.get('status')):<2} {self._clip(c.get('statement') or c['claim_id'], 78)}"
             for c in claims[-7:]
         ]
         if attempts:
             lines.append("\nPartial results:")
             lines.extend(
-                f"E{a['epoch']} {a['agent_slot']}"
+                f"E{a['epoch']} {a['agent_slot']} → {self._route_label(a.get('route_id'), 32)}"
                 for a in attempts[-4:]
             )
         return "\n".join(lines) or "No claims or attempts recorded."
@@ -1552,7 +1671,7 @@ class AriadneTUI:
         self.selected_failure = min(self.selected_failure, len(failures) - 1)
         listing = "\n".join(
             ("> " if i == self.selected_failure else "  ")
-            + f"{f.get('status', 'ACTIVE'):<9} {f['failure_id']} / {f['failure_class']}"
+            + f"{self._status_indicator(f.get('status', 'ACTIVE')):<2} {f['failure_id']} / {f['failure_class']}"
             for i, f in enumerate(failures)
         )
         return listing + "\n\n↑/↓ browse  •  j preview"
@@ -1684,11 +1803,57 @@ class AriadneTUI:
             preview = self._clip_multiline(raw_preview, 262_144)
             if len(raw_preview) > len(preview):
                 preview += "\n\n[Preview limited to 256 KiB; open the artifact file for the remainder.]"
+        graph = self._artifact_graph_text(selected)
         return (
             "Selected: " + self._artifact_summary(selected, raw_preview)
             + "\nStored at: " + str(selected["relative_path"])
+            + "\n\n" + graph
             + "\n\n" + preview + "\n\nPress k or Esc to return to the artifact list."
         )
+
+    def _artifact_graph_text(self, selected: dict[str, Any]) -> str:
+        """Render a compact Obsidian-style one-hop provenance graph for a preview."""
+        selected_id = str(selected.get("artifact_id", ""))
+        neighbors = self.store.list_artifact_neighbors([selected_id], limit=24)
+        center = f"[{selected_id}] {self._clip(selected.get('kind', 'artifact'), 36)}"
+        lines = ["Artifact graph · one-hop provenance", ""]
+        incoming: list[str] = []
+        outgoing: list[str] = []
+        for neighbor in neighbors:
+            node = (
+                f"[{neighbor.get('artifact_id', '')}] "
+                f"{self._clip(neighbor.get('kind', 'artifact'), 26)}"
+            )
+            relation_labels = [str(item) for item in neighbor.get("relations", [])]
+            incoming_labels = [
+                item.removeprefix("incoming:")
+                for item in relation_labels
+                if item.startswith("incoming:")
+            ]
+            outgoing_labels = [
+                item.removeprefix("outgoing:")
+                for item in relation_labels
+                if item.startswith("outgoing:")
+            ]
+            if incoming_labels:
+                incoming.append(f"  {node} ──{', '.join(incoming_labels)}──▶")
+            if outgoing_labels:
+                outgoing.append(f"  ◀──{', '.join(outgoing_labels)}── {node}")
+        if incoming:
+            lines.extend(incoming)
+            lines.append("          │")
+        lines.append(f"          {center}")
+        if outgoing:
+            lines.append("          │")
+            lines.extend(outgoing)
+        if not incoming and not outgoing:
+            lines.append("          · no recorded artifact edges yet")
+        lines.append("")
+        lines.append(
+            "Edges are recorded from agent context/use and artifact metadata. "
+            "The graph updates when you select another artifact."
+        )
+        return "\n".join(lines)
 
     @staticmethod
     def _extract_fenced_json(raw: str) -> str | None:

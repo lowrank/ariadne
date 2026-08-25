@@ -352,6 +352,88 @@ class StoreTests(unittest.TestCase):
             context = captured[0].metadata["artifact_context"]
             self.assertEqual(context[0]["id"], evidence.artifact_id)
             self.assertEqual(context[0]["relative_path"], str(evidence.path.relative_to(root)))
+            prompt = store.list_artifacts(kind="agent_prompt")[0]
+            response = store.list_artifacts(kind="agent_response")[0]
+            self.assertIn(
+                prompt["artifact_id"],
+                {
+                    item["artifact_id"]
+                    for item in store.list_artifact_neighbors([response["artifact_id"]])
+                },
+            )
+            self.assertIn(
+                evidence.artifact_id,
+                {
+                    item["artifact_id"]
+                    for item in store.list_artifact_neighbors([prompt["artifact_id"]])
+                },
+            )
+
+    def test_artifact_graph_backfills_existing_metadata_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ResearchStore(Path(tmp))
+            artifacts = ArtifactStore(store.paths)
+            source = artifacts.put_text("source", kind="partial_result")
+            store.record_artifact(source)
+            derived = artifacts.put_text(
+                "derived", kind="proof_candidate",
+                metadata={"source_artifact_id": source.artifact_id},
+            )
+            store.record_artifact(derived)
+            with store.transaction() as conn:
+                conn.execute("DELETE FROM artifact_edges")
+                conn.execute("DELETE FROM meta WHERE key='artifact_graph_backfill_v1'")
+            neighbors = store.list_artifact_neighbors([source.artifact_id])
+            self.assertIn(
+                derived.artifact_id, {item["artifact_id"] for item in neighbors}
+            )
+            self.assertTrue(store.get_meta("artifact_graph_backfill_v1"))
+
+    def test_route_context_expands_with_one_hop_artifact_neighbor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ResearchStore(root)
+            artifacts = ArtifactStore(store.paths)
+            route_id = "RTE-graph"
+            seed = artifacts.put_text(
+                "route-local bridge", kind="partial_result",
+                metadata={"route_id": route_id},
+            )
+            store.record_artifact(seed)
+            neighbor = artifacts.put_text(
+                "audit of the route-local bridge", kind="local_audit",
+                metadata={"source_artifact_id": seed.artifact_id},
+            )
+            store.record_artifact(neighbor)
+            for index in range(20):
+                unrelated = artifacts.put_text(
+                    f"unrelated evidence {index}", kind="partial_result"
+                )
+                store.record_artifact(unrelated)
+            config = HarnessConfig(
+                providers={"mock": ProviderConfig(name="mock", kind="mock")},
+                roles={"offline_researcher": RoleConfig(
+                    name="offline_researcher", provider="mock", network_policy="deny"
+                )},
+                budget=BudgetConfig(max_epochs=1, max_calls=2, max_cost_usd=5.0),
+                mode=ModeConfig(
+                    name="offline_only", offline_agents=1, literature_intervention=False
+                ),
+            )
+            context = AgentRunner(store, config)._artifact_context_for_call(
+                AgentCall(
+                    role="offline_researcher", slot="offline-1", prompt="check bridge",
+                    project_root=root, network_policy="deny", route_id=route_id,
+                )
+            )
+            by_id = {item["id"]: item for item in context}
+            self.assertIn(seed.artifact_id, by_id)
+            self.assertIn(neighbor.artifact_id, by_id)
+            self.assertEqual(
+                by_id[neighbor.artifact_id]["context_reason"],
+                "one-hop provenance neighbor",
+            )
+            self.assertIn("incoming:metadata:source_artifact_id", by_id[neighbor.artifact_id]["relations"])
 
     def test_agent_uses_estimated_cost_when_provider_omits_cost(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

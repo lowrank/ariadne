@@ -45,7 +45,8 @@ class AgentRunner:
                 "\n\n# Local artifact context\n"
                 "A curated, read-only snapshot of the referenced project material is available "
                 "inside this invocation at ariadne-context/. Use ariadne-context/MANIFEST.json "
-                "to map IDs to files, inspect an exact file only when needed, and do not write there.\n"
+                "to map IDs to files, inspect an exact file only when needed, follow any listed "
+                "one-hop provenance neighbors when relevant, and do not write there.\n"
             )
         prompt_artifact = self.artifacts.put_text(
             prompt_text,
@@ -57,6 +58,11 @@ class AgentRunner:
                 "network_policy": call.network_policy,
                 "route_id": call.route_id,
                 "epoch": call.epoch,
+                "context_artifact_ids": [
+                    str(item.get("id", ""))
+                    for item in artifact_context
+                    if str(item.get("id", "")).startswith("ART-")
+                ],
             },
         )
         self.store.record_artifact(prompt_artifact)
@@ -196,6 +202,8 @@ class AgentRunner:
                 "route_id": call.route_id,
                 "epoch": call.epoch,
                 "usage": asdict(response.usage),
+                "prompt_artifact_id": prompt_artifact.artifact_id,
+                "used_artifact_ids": self._declared_used_artifact_ids(structured_response),
             },
         )
         self.store.record_artifact(response_artifact)
@@ -269,25 +277,30 @@ class AgentRunner:
             ) / 1_000_000
         return reserved_cost_usd
 
-    def _artifact_context_for_call(self, call: AgentCall) -> list[dict[str, str]]:
-        # These are copied into a per-invocation scratch snapshot by the Codex
-        # wrapper. The compact prompt still carries the index, so exact files are
-        # opened only on demand rather than consuming every role's context.
-        records: list[dict[str, str]] = []
-        seen: set[str] = set()
+    @staticmethod
+    def _declared_used_artifact_ids(response: dict[str, object]) -> list[str]:
+        raw = response.get("used_artifact_ids", [])
+        if not isinstance(raw, list):
+            return []
+        return sorted(
+            {
+                str(item).strip()
+                for item in raw
+                if str(item).strip().startswith("ART-")
+            }
+        )
 
-        def add(record: dict[str, object], identifier: str) -> None:
-            relative = str(record.get("relative_path", "")).strip()
-            if not relative or relative in seen:
-                return
-            seen.add(relative)
-            records.append(
-                {
-                    "id": identifier,
-                    "kind": str(record.get("kind", "artifact")),
-                    "relative_path": relative,
-                }
-            )
+    def _artifact_context_for_call(self, call: AgentCall) -> list[dict[str, str]]:
+        """Select route-local evidence, then one-hop provenance neighbors.
+
+        The provider receives at most 24 artifacts and 12 literature files.
+        Reserving eight artifact slots for graph neighbors makes a predecessor,
+        audit, source response, or downstream note available without turning
+        every bounded invocation into a dump of the whole project.
+        """
+        records: list[dict[str, str]] = []
+        seen_paths: set[str] = set()
+        seen_ids: set[str] = set()
 
         literature_roles = {
             "literature_researcher",
@@ -296,17 +309,92 @@ class AgentRunner:
             "contract_resolver",
             "proof_expander",
         }
-        for artifact in self.store.list_artifacts(limit=24):
-            metadata = artifact.get("metadata", {})
-            if (
+
+        def allowed(record: dict[str, object]) -> bool:
+            metadata = record.get("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+            return not (
                 call.role == "offline_researcher"
                 and (
                     str(metadata.get("role", "")) in literature_roles
-                    or "literature" in str(artifact.get("kind", "")).lower()
+                    or "literature" in str(record.get("kind", "")).lower()
                 )
+            )
+
+        def add(
+            record: dict[str, object],
+            identifier: str,
+            *,
+            context_reason: str,
+            neighbor_of: list[str] | None = None,
+            relations: list[str] | None = None,
+        ) -> bool:
+            relative = str(record.get("relative_path", "")).strip()
+            if (
+                not identifier
+                or not relative
+                or relative in seen_paths
+                or identifier in seen_ids
             ):
+                return False
+            seen_paths.add(relative)
+            seen_ids.add(identifier)
+            entry = {
+                "id": identifier,
+                "kind": str(record.get("kind", "artifact")),
+                "relative_path": relative,
+                "context_reason": context_reason,
+            }
+            if neighbor_of:
+                entry["neighbor_of"] = ", ".join(neighbor_of)
+            if relations:
+                entry["relations"] = ", ".join(relations)
+            records.append(entry)
+            return True
+
+        artifacts = [
+            item for item in self.store.list_artifacts(limit=240) if allowed(item)
+        ]
+        indexed = list(enumerate(artifacts))
+
+        def seed_rank(item: tuple[int, dict[str, object]]) -> tuple[int, int, int]:
+            index, artifact = item
+            metadata = artifact.get("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+            same_route = bool(call.route_id) and str(metadata.get("route_id", "")) == str(call.route_id)
+            same_campaign = bool(call.campaign_id) and str(metadata.get("campaign_id", "")) == str(call.campaign_id)
+            return (0 if same_route else 1, 0 if same_campaign else 1, index)
+
+        seeds = [
+            artifact
+            for _, artifact in sorted(indexed, key=seed_rank)[:16]
+        ]
+        for artifact in seeds:
+            metadata = artifact.get("metadata", {})
+            same_route = isinstance(metadata, dict) and bool(call.route_id) and str(metadata.get("route_id", "")) == str(call.route_id)
+            add(
+                artifact,
+                str(artifact.get("artifact_id", "")),
+                context_reason="route-local seed" if same_route else "recent evidence seed",
+            )
+
+        neighbors = self.store.list_artifact_neighbors(
+            [str(item.get("artifact_id", "")) for item in seeds],
+            limit=96,
+        )
+        for neighbor in neighbors:
+            if len(records) >= 24 or not allowed(neighbor):
                 continue
-            add(artifact, str(artifact.get("artifact_id", "")))
+            add(
+                neighbor,
+                str(neighbor.get("artifact_id", "")),
+                context_reason="one-hop provenance neighbor",
+                neighbor_of=[str(item) for item in neighbor.get("neighbor_of", [])],
+                relations=[str(item) for item in neighbor.get("relations", [])],
+            )
+
         if call.role in literature_roles:
             query = call.prompt
             if call.route_id:
@@ -332,6 +420,7 @@ class AgentRunner:
                         "relative_path": source.get("relative_path", ""),
                     },
                     str(source.get("source_id", "")),
+                    context_reason="route-ranked literature source",
                 )
         return records[:36]
 

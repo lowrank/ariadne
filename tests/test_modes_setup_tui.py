@@ -915,13 +915,18 @@ class ModeSetupTuiTests(unittest.TestCase):
 
     def test_artifact_browser_and_preview_are_separate_and_json_is_readable(self) -> None:
         config_path = self._config("offline_only", offline=1)
+        source = ArtifactStore(self.store.paths).put_text(
+            "The retained exact identity.", kind="partial_result"
+        )
+        self.store.record_artifact(source)
         artifact = ArtifactStore(self.store.paths).put_text(
             json.dumps({
                 "summary": "complete numerical check",
                 "tail": "VISIBLE-AFTER-ONE-KIB" + "x" * 1200,
                 "verification": {"exact": True, "steps": ["derive identity", "check endpoints"]},
             }),
-            kind="numerical_evidence", suffix=".json", metadata={"status": "OBSERVED"},
+            kind="numerical_evidence", suffix=".json",
+            metadata={"status": "OBSERVED", "source_artifact_id": source.artifact_id},
         )
         self.store.record_artifact(artifact)
         tui = AriadneTUI(self.root, config_path)
@@ -935,6 +940,9 @@ class ModeSetupTuiTests(unittest.TestCase):
         self.assertIn("Summary: complete numerical check", preview)
         self.assertIn("VISIBLE-AFTER-ONE-KIB", preview)
         self.assertIn("Stored at: .ariadne/artifacts/", preview)
+        self.assertIn("Artifact graph · one-hop provenance", preview)
+        self.assertIn(source.artifact_id, preview)
+        self.assertIn("metadata:source_artifact_id", preview)
         self.assertIn("Verification:", preview)
         self.assertIn("Exact: yes", preview)
         self.assertIn("- derive identity", preview)
@@ -1329,11 +1337,20 @@ class ModeSetupTuiTests(unittest.TestCase):
         CampaignController(self.root, config).run()
         tui = AriadneTUI(self.root, config_path)
         self.assertIn("Mode test", tui._campaign_text())
-        self.assertIn("COMPLETED", tui._tasks_text())
-        self.assertIn("RTE-", tui._routes_text())
+        self.assertIn("✓", tui._tasks_text())
+        self.assertIn("Weighted coercivity route", tui._routes_text())
         self.assertIn("Calls:", tui._budget_text())
         self.assertIn(f"Folder: {self.root.name}", tui._footer_text())
         self.assertTrue(tui._artifacts_text())
+
+    def test_tui_compact_status_indicators_replace_lifecycle_words(self) -> None:
+        tui = AriadneTUI(self.root, self._config("offline_only", offline=1))
+        self.assertIn(tui._status_indicator("RUNNING"), {"◐", "◓", "◑", "◒"})
+        self.assertEqual(tui._status_indicator("QUEUED"), "○")
+        self.assertEqual(tui._status_indicator("COMPLETED"), "✓")
+        self.assertEqual(tui._status_indicator("FAILED"), "×")
+        self.assertEqual(tui._status_indicator("PAUSED_HUMAN"), "Ⅱ")
+        self.assertEqual(tui._status_indicator("BUDGET_EXHAUSTED"), "!")
 
     def test_partial_result_claim_is_retained_and_browsable_as_an_artifact(self) -> None:
         config_path = self._config("offline_only", offline=1)
@@ -1465,13 +1482,22 @@ class ModeSetupTuiTests(unittest.TestCase):
         )
         tui = AriadneTUI(self.root, config_path)
         task_list = tui._tasks_text()
-        self.assertIn("j preview", task_list)
+        self.assertIn("j route/claim preview", task_list)
+        self.assertIn("offline-1", task_list)
+        self.assertIn("Algebraic route", task_list)
         self.assertNotIn("Derive the full exact bridge", task_list)
-        self.assertIn("Summary: Derive the full exact bridge", tui._task_preview_text())
+        task_preview = tui._task_preview_text()
+        self.assertIn("Summary: Derive the full exact bridge", task_preview)
+        self.assertIn("Title: Algebraic route", task_preview)
+        self.assertIn("Statement: Prove P for every admissible X.", task_preview)
         route_list = tui._routes_text()
-        self.assertIn("j preview", route_list)
+        self.assertIn("j route/claim preview", route_list)
+        self.assertIn("Algebraic route", route_list)
         self.assertNotIn("derive the exact bridge", route_list)
-        self.assertIn("Key lemma: derive the exact bridge", tui._route_preview_text())
+        route_preview = tui._route_preview_text()
+        self.assertIn("Key lemma: derive the exact bridge", route_preview)
+        self.assertIn("Owner agent: offline-1", route_preview)
+        self.assertIn("Statement: Prove P for every admissible X.", route_preview)
         failure_list = tui._failures_text()
         self.assertIn("j preview", failure_list)
         self.assertNotIn("use a symmetric form", failure_list)

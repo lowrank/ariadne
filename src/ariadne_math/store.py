@@ -39,6 +39,18 @@ CREATE TABLE IF NOT EXISTS artifacts (
     created_at TEXT NOT NULL
 );
 
+-- A durable, append-only provenance graph. Edges are recorded only when both
+-- content-addressed artifact nodes already exist, and never alter artifacts.
+CREATE TABLE IF NOT EXISTS artifact_edges (
+    source_artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
+    target_artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
+    relation TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (source_artifact_id, target_artifact_id, relation)
+);
+CREATE INDEX IF NOT EXISTS artifact_edges_target_idx
+    ON artifact_edges(target_artifact_id);
+
 CREATE TABLE IF NOT EXISTS campaigns (
     campaign_id TEXT PRIMARY KEY,
     mode TEXT NOT NULL,
@@ -583,7 +595,9 @@ class ResearchStore:
     def record_artifact(
         self, artifact: ArtifactRecord, metadata: dict[str, Any] | None = None
     ) -> None:
+        """Register immutable content and the provenance references it declares."""
         relative = str(artifact.path.relative_to(self.paths.root))
+        effective_metadata = metadata if metadata is not None else artifact.metadata
         with self.transaction() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO artifacts VALUES(?, ?, ?, ?, ?, ?, ?)",
@@ -593,10 +607,188 @@ class ResearchStore:
                     artifact.media_type,
                     relative,
                     artifact.size,
-                    canonical_json(metadata if metadata is not None else artifact.metadata),
+                    canonical_json(effective_metadata),
                     utc_now(),
                 ),
             )
+            self._record_metadata_artifact_edges(
+                conn,
+                source_artifact_id=artifact.artifact_id,
+                metadata=effective_metadata,
+            )
+
+    @staticmethod
+    def _artifact_references(
+        value: Any, path: tuple[str, ...] = ()
+    ) -> list[tuple[str, str]]:
+        """Extract artifact IDs from structured metadata without reading artifact bodies."""
+        references: list[tuple[str, str]] = []
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                references.extend(
+                    ResearchStore._artifact_references(nested, path + (str(key),))
+                )
+        elif isinstance(value, list):
+            for index, nested in enumerate(value):
+                references.extend(
+                    ResearchStore._artifact_references(nested, path + (str(index),))
+                )
+        elif isinstance(value, str):
+            for artifact_id in re.findall(r"\bART-[A-Za-z0-9_-]+\b", value):
+                references.append((artifact_id, ".".join(path) or "metadata"))
+        return references
+
+    @staticmethod
+    def _record_metadata_artifact_edges(
+        conn: sqlite3.Connection,
+        *,
+        source_artifact_id: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        now = utc_now()
+        for target_artifact_id, metadata_path in ResearchStore._artifact_references(metadata):
+            if target_artifact_id == source_artifact_id:
+                continue
+            conn.execute(
+                "INSERT OR IGNORE INTO artifact_edges"
+                "(source_artifact_id,target_artifact_id,relation,created_at) "
+                "SELECT ?, ?, ?, ? WHERE EXISTS("
+                "SELECT 1 FROM artifacts WHERE artifact_id=?"
+                ") AND EXISTS(SELECT 1 FROM artifacts WHERE artifact_id=?)",
+                (
+                    source_artifact_id,
+                    target_artifact_id,
+                    f"metadata:{metadata_path}",
+                    now,
+                    source_artifact_id,
+                    target_artifact_id,
+                ),
+            )
+
+    def link_artifacts(
+        self, *, source_artifact_id: str, target_artifact_ids: list[str], relation: str
+    ) -> None:
+        """Add auditable provenance edges without mutating either artifact."""
+        clean_relation = re.sub(r"[^a-zA-Z0-9_.:-]+", "_", relation).strip("_") or "related"
+        targets = sorted(
+            {
+                str(item).strip()
+                for item in target_artifact_ids
+                if str(item).strip() and str(item).strip() != source_artifact_id
+            }
+        )
+        if not targets:
+            return
+        now = utc_now()
+        with self.transaction() as conn:
+            for target_artifact_id in targets:
+                conn.execute(
+                    "INSERT OR IGNORE INTO artifact_edges"
+                    "(source_artifact_id,target_artifact_id,relation,created_at) "
+                    "SELECT ?, ?, ?, ? WHERE EXISTS("
+                    "SELECT 1 FROM artifacts WHERE artifact_id=?"
+                    ") AND EXISTS(SELECT 1 FROM artifacts WHERE artifact_id=?)",
+                    (
+                        source_artifact_id,
+                        target_artifact_id,
+                        clean_relation,
+                        now,
+                        source_artifact_id,
+                        target_artifact_id,
+                    ),
+                )
+
+    def _ensure_artifact_graph_backfill(self) -> None:
+        """Backfill pre-graph metadata once, without recurring TUI writes."""
+        marker = "artifact_graph_backfill_v1"
+        with self.transaction() as conn:
+            present = conn.execute(
+                "SELECT value FROM meta WHERE key=?", (marker,)
+            ).fetchone()
+            if present:
+                return
+            rows = conn.execute(
+                "SELECT artifact_id,metadata_json FROM artifacts"
+            ).fetchall()
+            for row in rows:
+                try:
+                    metadata = json.loads(str(row["metadata_json"]))
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(metadata, dict):
+                    self._record_metadata_artifact_edges(
+                        conn,
+                        source_artifact_id=str(row["artifact_id"]),
+                        metadata=metadata,
+                    )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                (marker, utc_now()),
+            )
+
+    def list_artifact_neighbors(
+        self, artifact_ids: list[str], *, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Return one-hop graph neighbors, including direction and relation labels."""
+        seeds = sorted({str(item).strip() for item in artifact_ids if str(item).strip()})
+        if not seeds:
+            return []
+        self._ensure_artifact_graph_backfill()
+        placeholders = ",".join("?" for _ in seeds)
+        query = (
+            "SELECT source_artifact_id,target_artifact_id,relation FROM artifact_edges "
+            f"WHERE source_artifact_id IN ({placeholders}) OR target_artifact_id IN ({placeholders})"
+        )
+        with self.transaction() as conn:
+            edges = [dict(row) for row in conn.execute(query, [*seeds, *seeds]).fetchall()]
+            neighbor_ids = {
+                str(edge["target_artifact_id"])
+                if str(edge["source_artifact_id"]) in seeds
+                else str(edge["source_artifact_id"])
+                for edge in edges
+            }
+            if not neighbor_ids:
+                return []
+            neighbor_placeholders = ",".join("?" for _ in neighbor_ids)
+            records = {
+                str(row["artifact_id"]): dict(row)
+                for row in conn.execute(
+                    f"SELECT * FROM artifacts WHERE artifact_id IN ({neighbor_placeholders})",
+                    sorted(neighbor_ids),
+                ).fetchall()
+            }
+        grouped: dict[str, dict[str, Any]] = {}
+        for edge in edges:
+            source = str(edge["source_artifact_id"])
+            target = str(edge["target_artifact_id"])
+            neighbor_id = target if source in seeds else source
+            record = records.get(neighbor_id)
+            if record is None:
+                continue
+            item = grouped.get(neighbor_id)
+            if item is None:
+                item = {
+                    **record,
+                    "metadata": json.loads(str(record["metadata_json"])),
+                    "neighbor_of": [],
+                    "relations": [],
+                }
+                item.pop("metadata_json", None)
+                grouped[neighbor_id] = item
+            seed_id = source if source in seeds else target
+            direction = "outgoing" if source in seeds else "incoming"
+            item["neighbor_of"].append(seed_id)
+            item["relations"].append(
+                {"type": str(edge["relation"]), "direction": direction}
+            )
+        result = list(grouped.values())
+        for item in result:
+            item["neighbor_of"] = sorted(set(item["neighbor_of"]))
+            item["relations"] = sorted(
+                {f"{relation['direction']}:{relation['type']}" for relation in item["relations"]}
+            )
+        result.sort(key=lambda item: str(item["created_at"]), reverse=True)
+        return result[:limit] if limit is not None else result
 
     def create_campaign(
         self,

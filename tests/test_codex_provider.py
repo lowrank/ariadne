@@ -270,6 +270,9 @@ class CodexProviderTests(unittest.TestCase):
         self.assertTrue(manifest["read_only"])
         self.assertEqual(manifest["available"][0]["id"], "ART-test")
         self.assertEqual(manifest["available"][0]["workspace_relative_path"], "ariadne-context/" + relative)
+        self.assertEqual(manifest["available"][0]["context_reason"], "curated evidence")
+        self.assertEqual(manifest["available"][0]["neighbor_of"], "")
+        self.assertEqual(manifest["available"][0]["relations"], "")
         self.assertEqual(manifest["skipped"], [])
 
     def test_literature_research_role_has_coding_without_changing_web_policy(self) -> None:

@@ -153,6 +153,9 @@ def _stage_artifact_context(workspace: Path) -> dict[str, Any]:
                 "relative_path": relative,
                 "workspace_relative_path": str(destination.relative_to(workspace)),
                 "size": size,
+                "context_reason": str(record.get("context_reason", "curated evidence")),
+                "neighbor_of": str(record.get("neighbor_of", "")),
+                "relations": str(record.get("relations", "")),
             }
         )
 
@@ -177,7 +180,9 @@ def _artifact_context_instruction(manifest: dict[str, Any]) -> str:
     return (
         "\n\nAriadne staged an isolated, read-only evidence snapshot in ariadne-context/. "
         "Read ariadne-context/MANIFEST.json before opening an exact artifact. "
-        "Only files listed there are available; do not infer omitted material or write into that directory.\n"
+        "Its context_reason, neighbor_of, and relations fields describe the selected "
+        "one-hop provenance graph. Only files listed there are available; do not infer "
+        "omitted material or write into that directory.\n"
     )
 
 
