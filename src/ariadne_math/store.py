@@ -52,6 +52,20 @@ CREATE TABLE IF NOT EXISTS campaigns (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS scheduled_campaign_actions (
+    action_id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL REFERENCES campaigns(campaign_id),
+    kind TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    requested_by TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    apply_before_epoch INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT "PENDING",
+    requested_at TEXT NOT NULL,
+    applied_at TEXT,
+    outcome_json TEXT NOT NULL DEFAULT "{}"
+);
+
 CREATE TABLE IF NOT EXISTS claims (
     claim_id TEXT PRIMARY KEY,
     statement TEXT NOT NULL,
@@ -399,6 +413,172 @@ class ResearchStore:
             row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return str(row["value"]) if row else default
 
+    def _schedule_campaign_action(
+        self,
+        *,
+        campaign_id: str,
+        kind: str,
+        payload: dict[str, Any],
+        requested_by: str,
+        rationale: str,
+    ) -> dict[str, Any]:
+        campaign = self.get_campaign(campaign_id)
+        if str(campaign["status"]) != CampaignStatus.RUNNING:
+            raise ValueError("Only a running campaign needs next-epoch scheduling")
+        now = utc_now()
+        record = {
+            "campaign_id": campaign_id,
+            "kind": kind,
+            "payload": payload,
+            "requested_by": requested_by,
+            "rationale": rationale,
+            "requested_at": now,
+        }
+        action_id = short_id("ACT", record)
+        apply_before_epoch = int(campaign["epoch"]) + 1
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO scheduled_campaign_actions "
+                "(action_id,campaign_id,kind,payload_json,requested_by,rationale,"
+                "apply_before_epoch,status,requested_at,applied_at,outcome_json) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, NULL, '{}')",
+                (
+                    action_id,
+                    campaign_id,
+                    kind,
+                    canonical_json(payload),
+                    requested_by,
+                    rationale,
+                    apply_before_epoch,
+                    now,
+                ),
+            )
+        result = {
+            "action_id": action_id,
+            "campaign_id": campaign_id,
+            "kind": kind,
+            "payload": payload,
+            "requested_by": requested_by,
+            "rationale": rationale,
+            "apply_before_epoch": apply_before_epoch,
+            "status": "PENDING",
+            "requested_at": now,
+        }
+        self.events.append("campaign_action_scheduled", result)
+        return result
+
+    def list_scheduled_campaign_actions(
+        self, campaign_id: str, *, pending_only: bool = False
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM scheduled_campaign_actions WHERE campaign_id=?"
+        if pending_only:
+            query += " AND status='PENDING'"
+        query += " ORDER BY requested_at, action_id"
+        with self.transaction() as conn:
+            rows = conn.execute(query, (campaign_id,)).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            item["outcome"] = json.loads(item.pop("outcome_json"))
+            items.append(item)
+        return items
+
+    def apply_scheduled_campaign_actions(
+        self, campaign_id: str
+    ) -> list[dict[str, Any]]:
+        # Apply queued human controls before a new epoch is planned.
+        applied: list[dict[str, Any]] = []
+        with self.transaction() as conn:
+            campaign_row = conn.execute(
+                "SELECT * FROM campaigns WHERE campaign_id=?", (campaign_id,)
+            ).fetchone()
+            if not campaign_row:
+                raise KeyError(f"Unknown campaign {campaign_id}")
+            campaign = dict(campaign_row)
+            rows = conn.execute(
+                "SELECT * FROM scheduled_campaign_actions "
+                "WHERE campaign_id=? AND status='PENDING' ORDER BY requested_at, action_id",
+                (campaign_id,),
+            ).fetchall()
+            for row in rows:
+                action = dict(row)
+                payload = json.loads(str(action["payload_json"]))
+                outcome: dict[str, Any]
+                try:
+                    if action["kind"] == "BUDGET":
+                        max_epochs = int(payload["max_epochs"])
+                        max_calls = int(payload["max_calls"])
+                        max_cost_usd = float(payload["max_cost_usd"])
+                        if max_epochs < max(1, int(campaign["epoch"])):
+                            raise ValueError("max_epochs cannot be below the completed epoch")
+                        if max_calls < int(campaign["calls_used"]):
+                            raise ValueError("max_calls cannot be below calls already used")
+                        if max_cost_usd < float(campaign["cost_used"]):
+                            raise ValueError("max_cost_usd cannot be below recorded cost already used")
+                        if max_cost_usd < 0 or not math.isfinite(max_cost_usd):
+                            raise ValueError("max_cost_usd must be a finite nonnegative number")
+                        conn.execute(
+                            "UPDATE campaigns SET max_epochs=?, max_calls=?, max_cost_usd=?, updated_at=? "
+                            "WHERE campaign_id=?",
+                            (max_epochs, max_calls, max_cost_usd, utc_now(), campaign_id),
+                        )
+                        campaign.update(
+                            max_epochs=max_epochs,
+                            max_calls=max_calls,
+                            max_cost_usd=max_cost_usd,
+                        )
+                        outcome = {
+                            "application": "APPLIED",
+                            "max_epochs": max_epochs,
+                            "max_calls": max_calls,
+                            "max_cost_usd": max_cost_usd,
+                        }
+                    elif action["kind"] == "ROUTE_STATUS":
+                        route_id = str(payload["route_id"])
+                        route = conn.execute(
+                            "SELECT campaign_id FROM routes WHERE route_id=?", (route_id,)
+                        ).fetchone()
+                        if not route:
+                            raise KeyError(f"Unknown route {route_id}")
+                        if str(route["campaign_id"]) != campaign_id:
+                            raise ValueError(f"Route {route_id} belongs to another campaign")
+                        status = str(payload["status"])
+                        conn.execute(
+                            "UPDATE routes SET status=?, updated_at=? WHERE route_id=?",
+                            (status, utc_now(), route_id),
+                        )
+                        outcome = {
+                            "application": "APPLIED",
+                            "route_id": route_id,
+                            "status": status,
+                        }
+                    else:
+                        raise ValueError(f"Unknown scheduled action kind {action['kind']}")
+                    action_status = "APPLIED"
+                except (KeyError, TypeError, ValueError) as exc:
+                    action_status = "REJECTED"
+                    outcome = {"application": "REJECTED", "error": str(exc)}
+                conn.execute(
+                    "UPDATE scheduled_campaign_actions SET status=?, applied_at=?, outcome_json=? "
+                    "WHERE action_id=?",
+                    (action_status, utc_now(), canonical_json(outcome), action["action_id"]),
+                )
+                applied.append(
+                    {
+                        "action_id": str(action["action_id"]),
+                        "campaign_id": campaign_id,
+                        "kind": str(action["kind"]),
+                        "status": action_status,
+                        "payload": payload,
+                        "outcome": outcome,
+                        "apply_before_epoch": int(action["apply_before_epoch"]),
+                    }
+                )
+        for action in applied:
+            self.events.append("campaign_action_applied", action)
+        return applied
+
     def record_artifact(
         self, artifact: ArtifactRecord, metadata: dict[str, Any] | None = None
     ) -> None:
@@ -507,11 +687,8 @@ class ResearchStore:
         adjusted_by: str,
         reason: str,
     ) -> dict[str, Any]:
-        """Change limits only at a durable human pause boundary.
-
-        The spent budget is never rewritten. New ceilings must still cover all
-        completed and reserved work, and no live or queued work may remain.
-        """
+        # A running campaign records an auditable request and applies it only
+        # at the next epoch boundary. Paused campaigns change immediately.
         if not str(reason).strip():
             raise ValueError("Budget adjustment reason must not be empty")
         with self.transaction() as conn:
@@ -523,12 +700,13 @@ class ResearchStore:
             campaign = dict(row)
             prior_status = str(campaign["status"])
             if prior_status not in {
+                CampaignStatus.RUNNING,
                 CampaignStatus.PAUSED_HUMAN,
                 CampaignStatus.BUDGET_EXHAUSTED,
                 CampaignStatus.COMPLETED_UNSOLVED,
             }:
                 raise ValueError(
-                    "Budget changes require PAUSED_HUMAN, BUDGET_EXHAUSTED, or COMPLETED_UNSOLVED"
+                    "Budget changes require RUNNING, PAUSED_HUMAN, BUDGET_EXHAUSTED, or COMPLETED_UNSOLVED"
                 )
             active_runs = conn.execute(
                 "SELECT COUNT(*) FROM agent_runs WHERE campaign_id=? AND status='RUNNING'",
@@ -538,9 +716,9 @@ class ResearchStore:
                 "SELECT COUNT(*) FROM task_queue WHERE campaign_id=? AND status IN ('QUEUED','RUNNING')",
                 (campaign_id,),
             ).fetchone()[0]
-            if active_runs or queued_tasks:
+            if (active_runs or queued_tasks) and prior_status != CampaignStatus.RUNNING:
                 raise ValueError(
-                    "Budget changes require no active or queued work; use campaign recover for stale work"
+                    "Budget changes require no active or queued work outside a running campaign; use campaign recover for stale work"
                 )
             new_epochs = int(campaign["max_epochs"]) if max_epochs is None else int(max_epochs)
             new_calls = int(campaign["max_calls"]) if max_calls is None else int(max_calls)
@@ -565,51 +743,88 @@ class ResearchStore:
                 "max_calls": int(campaign["max_calls"]),
                 "max_cost_usd": float(campaign["max_cost_usd"]),
             }
-            now = utc_now()
-            conn.execute(
-                "UPDATE campaigns SET max_epochs=?, max_calls=?, max_cost_usd=?, status=?, updated_at=? "
-                "WHERE campaign_id=?",
-                (
-                    new_epochs, new_calls, new_cost,
-                    CampaignStatus.PAUSED_HUMAN if prior_status in {
-                        CampaignStatus.BUDGET_EXHAUSTED, CampaignStatus.COMPLETED_UNSOLVED
-                    } else prior_status,
-                    now, campaign_id,
-                ),
-            )
-        selected = {
+            scheduled = prior_status == CampaignStatus.RUNNING
+            if not scheduled:
+                now = utc_now()
+                conn.execute(
+                    "UPDATE campaigns SET max_epochs=?, max_calls=?, max_cost_usd=?, status=?, updated_at=? "
+                    "WHERE campaign_id=?",
+                    (
+                        new_epochs,
+                        new_calls,
+                        new_cost,
+                        CampaignStatus.PAUSED_HUMAN
+                        if prior_status in {
+                            CampaignStatus.BUDGET_EXHAUSTED,
+                            CampaignStatus.COMPLETED_UNSOLVED,
+                        }
+                        else prior_status,
+                        now,
+                        campaign_id,
+                    ),
+                )
+
+        payload = {
             "max_epochs": new_epochs,
             "max_calls": new_calls,
             "max_cost_usd": new_cost,
+        }
+        action = None
+        if scheduled:
+            action = self._schedule_campaign_action(
+                campaign_id=campaign_id,
+                kind="BUDGET",
+                payload=payload,
+                requested_by=adjusted_by,
+                rationale=reason.strip(),
+            )
+        selected = {
+            **payload,
             "adjusted_by": adjusted_by,
             "prior_status": prior_status,
-            "status": (
+            "status": prior_status if scheduled else (
                 CampaignStatus.PAUSED_HUMAN
-                if prior_status in {CampaignStatus.BUDGET_EXHAUSTED, CampaignStatus.COMPLETED_UNSOLVED}
+                if prior_status in {
+                    CampaignStatus.BUDGET_EXHAUSTED,
+                    CampaignStatus.COMPLETED_UNSOLVED,
+                }
                 else prior_status
             ),
+            "application": "NEXT_EPOCH" if scheduled else "IMMEDIATE",
+            "scheduled_action_id": action["action_id"] if action else None,
         }
         self.add_decision(
             campaign_id=campaign_id,
             epoch=int(campaign["epoch"]),
             kind="HUMAN_BUDGET_ADJUSTMENT",
-            available={"previous_limits": previous, "usage": {
-                "epoch": int(campaign["epoch"]),
-                "calls_used": int(campaign["calls_used"]),
-                "cost_used": float(campaign["cost_used"]),
-            }},
+            available={
+                "previous_limits": previous,
+                "usage": {
+                    "epoch": int(campaign["epoch"]),
+                    "calls_used": int(campaign["calls_used"]),
+                    "cost_used": float(campaign["cost_used"]),
+                },
+            },
             selected=selected,
             rationale=reason.strip(),
             expected_event=(
-                "Campaign is reopened as PAUSED_HUMAN and future bounded work follows the revised limits"
-                if prior_status in {CampaignStatus.BUDGET_EXHAUSTED, CampaignStatus.COMPLETED_UNSOLVED}
-                else "Future bounded work follows the revised campaign limits"
+                "Revised limits are applied before the next epoch begins"
+                if scheduled
+                else (
+                    "Campaign is reopened as PAUSED_HUMAN and future bounded work follows the revised limits"
+                    if prior_status
+                    in {
+                        CampaignStatus.BUDGET_EXHAUSTED,
+                        CampaignStatus.COMPLETED_UNSOLVED,
+                    }
+                    else "Future bounded work follows the revised campaign limits"
+                )
             ),
             stop_condition="The campaign reaches a revised budget limit or another human budget adjustment is recorded",
             cost_cap=0.0,
         )
         self.events.append(
-            "campaign_budget_adjusted",
+            "campaign_budget_scheduled" if scheduled else "campaign_budget_adjusted",
             {
                 "campaign_id": campaign_id,
                 "previous_limits": previous,
@@ -617,7 +832,11 @@ class ResearchStore:
                 "reason": reason.strip(),
             },
         )
-        return self.get_campaign(campaign_id)
+        result = self.get_campaign(campaign_id)
+        if action is not None:
+            result["scheduled_action"] = action
+            result["requested_limits"] = payload
+        return result
 
     def reserve_budget(
         self,
@@ -893,6 +1112,89 @@ class ResearchStore:
                 "novelty_obligation": novelty_obligation,
             },
         )
+
+    def set_human_route_status(
+        self,
+        *,
+        campaign_id: str,
+        route_id: str,
+        status: str,
+        requested_by: str,
+        rationale: str,
+    ) -> dict[str, Any]:
+        # Queue route controls during a live epoch so they cannot race with
+        # work that was already admitted for that epoch.
+        route = self.get_route(route_id)
+        if str(route["campaign_id"]) != campaign_id:
+            raise ValueError(
+                f"Route {route_id} belongs to {route['campaign_id']}, not {campaign_id}"
+            )
+        allowed = {
+            RouteStatus.ACTIVE,
+            RouteStatus.PARKED,
+            RouteStatus.OBSOLETE,
+            RouteStatus.NEEDS_HUMAN_IDEA,
+            RouteStatus.NEEDS_REPRESENTATION_CHANGE,
+        }
+        if status not in allowed:
+            raise ValueError(f"Unknown route status {status!r}")
+        campaign = self.get_campaign(campaign_id)
+        scheduled = str(campaign["status"]) == CampaignStatus.RUNNING
+        action = None
+        if scheduled:
+            action = self._schedule_campaign_action(
+                campaign_id=campaign_id,
+                kind="ROUTE_STATUS",
+                payload={"route_id": route_id, "status": status},
+                requested_by=requested_by,
+                rationale=rationale,
+            )
+        else:
+            self.update_route(route_id, status=status)
+        selected = {
+            "route_id": route_id,
+            "status": status,
+            "by": requested_by,
+            "application": "NEXT_EPOCH" if scheduled else "IMMEDIATE",
+            "scheduled_action_id": action["action_id"] if action else None,
+        }
+        self.add_decision(
+            campaign_id=campaign_id,
+            epoch=int(campaign["epoch"]),
+            kind="HUMAN_ROUTE_STATUS",
+            available={"route": route},
+            selected=selected,
+            rationale=rationale,
+            expected_event=(
+                "Route status is applied before the next epoch begins"
+                if scheduled
+                else (
+                    "Further bounded work under explicit human direction"
+                    if status == RouteStatus.ACTIVE
+                    else "No new work on this route until another explicit decision"
+                )
+            ),
+            stop_condition="Human changes the route status or the route reaches a terminal mathematical event",
+            cost_cap=0.0,
+        )
+        self.events.append(
+            "route_status_scheduled" if scheduled else "route_status_set",
+            {
+                "campaign_id": campaign_id,
+                "route_id": route_id,
+                "status": status,
+                "requested_by": requested_by,
+                "rationale": rationale,
+                "application": selected["application"],
+                "scheduled_action_id": selected["scheduled_action_id"],
+            },
+        )
+        result = {
+            "route": self.get_route(route_id),
+            "application": selected["application"],
+            "scheduled_action": action,
+        }
+        return result
 
     def add_attempt(
         self,

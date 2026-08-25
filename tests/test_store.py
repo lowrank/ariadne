@@ -9,7 +9,7 @@ from unittest import mock
 from ariadne_math.agent import AgentRunner
 from ariadne_math.artifacts import ArtifactStore
 from ariadne_math.config import BudgetConfig, HarnessConfig, ModeConfig, ProviderConfig, RoleConfig
-from ariadne_math.enums import ClaimStatus, RouteMode
+from ariadne_math.enums import ClaimStatus, RouteMode, RouteStatus
 from ariadne_math.models import AgentCall, ProviderResponse, Usage
 from ariadne_math.store import CampaignAlreadyRunning, ResearchStore
 
@@ -149,10 +149,33 @@ class StoreTests(unittest.TestCase):
             campaign = store.create_campaign(
                 mode="offline_only", max_epochs=3, max_calls=4, max_cost_usd=5.0
             )
-            with self.assertRaisesRegex(ValueError, "PAUSED_HUMAN, BUDGET_EXHAUSTED, or COMPLETED_UNSOLVED"):
+            with self.assertRaisesRegex(ValueError, "RUNNING, PAUSED_HUMAN, BUDGET_EXHAUSTED, or COMPLETED_UNSOLVED"):
                 store.adjust_campaign_budget(
                     campaign, max_calls=6, adjusted_by="tester", reason="Need another route"
                 )
+            store.update_campaign(campaign, status="RUNNING", epoch=1)
+            running = store.adjust_campaign_budget(
+                campaign, max_epochs=4, max_calls=6, max_cost_usd=7.0,
+                adjusted_by="tester", reason="Fund the next epoch without interrupting this one",
+            )
+            self.assertEqual(running["status"], "RUNNING")
+            self.assertEqual(running["max_epochs"], 3)
+            self.assertEqual(store.get_campaign(campaign)["max_calls"], 4)
+            self.assertEqual(running["requested_limits"]["max_calls"], 6)
+            self.assertEqual(running["scheduled_action"]["status"], "PENDING")
+            running_decision = store.list_decisions(campaign)[-1]
+            self.assertEqual(running_decision["selected"]["application"], "NEXT_EPOCH")
+            replacement = store.adjust_campaign_budget(
+                campaign, max_epochs=4, max_calls=5, max_cost_usd=6.0,
+                adjusted_by="tester", reason="Lower the ceiling after the active epoch",
+            )
+            self.assertEqual(replacement["scheduled_action"]["status"], "PENDING")
+            self.assertEqual(len(store.list_scheduled_campaign_actions(campaign, pending_only=True)), 2)
+            applied = store.apply_scheduled_campaign_actions(campaign)
+            self.assertEqual([item["status"] for item in applied], ["APPLIED", "APPLIED"])
+            self.assertEqual(store.get_campaign(campaign)["max_calls"], 5)
+            self.assertEqual(store.get_campaign(campaign)["max_cost_usd"], 6.0)
+
             store.update_campaign(campaign, status="PAUSED_HUMAN", epoch=1)
             updated = store.adjust_campaign_budget(
                 campaign, max_epochs=5, max_calls=8, max_cost_usd=9.5,
@@ -177,6 +200,48 @@ class StoreTests(unittest.TestCase):
                 store.adjust_campaign_budget(
                     campaign, max_calls=-1, adjusted_by="tester", reason="Invalid reduction"
                 )
+
+    def test_running_route_control_is_applied_before_next_epoch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ResearchStore(Path(tmp))
+            campaign = store.create_campaign(
+                mode="offline_only", max_epochs=3, max_calls=4, max_cost_usd=5.0
+            )
+            claim = store.add_claim(
+                statement="For all x, P(x)", status=ClaimStatus.PROPOSED
+            )
+            route_id = store.add_route(
+                campaign_id=campaign,
+                title="Direct route",
+                target_claim_id=claim,
+                mode=RouteMode.DEDUCTIVE,
+                method_family="induction",
+                representation="native",
+                key_lemma="induction step",
+                central_mechanism="reduce n+1 to n",
+                decisive_test="prove step",
+                difference_from_existing="first route",
+                fingerprint="induction native",
+                independence_cluster="induction",
+                owner_slot="offline-1",
+            )
+            store.update_campaign(campaign, status="RUNNING", epoch=1)
+            result = store.set_human_route_status(
+                campaign_id=campaign,
+                route_id=route_id,
+                status=RouteStatus.PARKED,
+                requested_by="tester",
+                rationale="Avoid duplicating the active epoch's assigned work",
+            )
+            self.assertEqual(result["application"], "NEXT_EPOCH")
+            self.assertEqual(store.get_route(route_id)["status"], RouteStatus.ACTIVE)
+            pending = store.list_scheduled_campaign_actions(campaign, pending_only=True)
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["kind"], "ROUTE_STATUS")
+            applied = store.apply_scheduled_campaign_actions(campaign)
+            self.assertEqual(applied[0]["status"], "APPLIED")
+            self.assertEqual(store.get_route(route_id)["status"], RouteStatus.PARKED)
+            self.assertEqual(store.list_scheduled_campaign_actions(campaign)[0]["status"], "APPLIED")
 
     def test_agent_settles_usage_only_provider_at_configured_token_price(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

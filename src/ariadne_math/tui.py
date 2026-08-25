@@ -165,6 +165,14 @@ class AriadneTUI:
                 adjusted_by="tui-chat-interpreter",
                 reason=str(budget.get("reason", "")).strip() or owner_message,
             )
+            if updated.get("scheduled_action"):
+                action = updated["scheduled_action"]
+                limits = updated["requested_limits"]
+                return (
+                    f"Budget change is scheduled before epoch {action['apply_before_epoch']}: "
+                    f"epochs {limits['max_epochs']}, calls {limits['max_calls']}, "
+                    f"cost ${float(limits['max_cost_usd']):.2f}."
+                )
             return (
                 f"Budget updated; campaign is {updated['status']}. "
                 f"epochs {updated['epoch']}/{updated['max_epochs']}, "
@@ -459,14 +467,14 @@ class AriadneTUI:
             "/pause": "request a safe pause at the next checkpoint",
             "/refresh": "refresh the panels",
             "/instruct": "save a researcher instruction; type /instruct TEXT for the quick path",
-            "/route": "change a route status",
+            "/route": "change a route status; live changes apply before the next epoch",
             "/setup": "run setup and start automatically; /setup manual waits",
             "/artifact": "browse artifacts: /artifact next|prev|open|close",
             "/help": "show slash-command help",
             "/model": "choose Codex reasoning strength: low to max",
             "/report": "generate the report and a continuation handoff brief",
             "/recover": "recover stale interrupted work and pause safely",
-            "/budget": "adjust limits for a safely paused campaign",
+            "/budget": "adjust limits now, or schedule them before the next running epoch",
             "/quit": "exit the TUI",
         }
         class SlashCommandCompleter(Completer):
@@ -697,17 +705,29 @@ class AriadneTUI:
                 except KeyError:
                     self.message = f"Unknown route {route_id}"
                     return
-                self.store.update_route(route_id, status=status)
                 campaign = self.store.latest_campaign()
-                if campaign:
-                    self.store.add_decision(
-                        campaign_id=str(campaign["campaign_id"]), epoch=int(campaign["epoch"]),
-                        kind="HUMAN_ROUTE_CONTROL", available={"route": route},
-                        selected={"route_id": route_id, "status": status}, rationale=note,
-                        expected_event="Future work follows the explicit route status",
-                        stop_condition="The operator changes the route status again", cost_cap=0.0,
+                if not campaign:
+                    self.message = "No campaign exists for route control"
+                    return
+                try:
+                    result = self.store.set_human_route_status(
+                        campaign_id=str(campaign["campaign_id"]),
+                        route_id=route_id,
+                        status=status,
+                        requested_by="tui-operator",
+                        rationale=note,
                     )
-                self.message = f"Route {route_id} set to {status}"
+                except ValueError as exc:
+                    self.message = f"Route unchanged: {exc}"
+                    return
+                if result["application"] == "NEXT_EPOCH":
+                    action = result["scheduled_action"]
+                    self.message = (
+                        f"Route change scheduled before epoch {action['apply_before_epoch']}: "
+                        f"{route_id} -> {status}"
+                    )
+                else:
+                    self.message = f"Route {route_id} set to {status}"
                 event.app.invalidate()
             event.app.create_background_task(ask())
 
@@ -833,11 +853,20 @@ class AriadneTUI:
             except (KeyError, ValueError) as exc:
                 self.message = f"Budget unchanged: {exc}"
                 return
-            self.message = (
-                f"Budget updated: epochs {updated['epoch']}/{updated['max_epochs']}, "
-                f"calls {updated['calls_used']}/{updated['max_calls']}, "
-                f"cost ${float(updated['cost_used']):.4f}/${float(updated['max_cost_usd']):.2f}"
-            )
+            if updated.get("scheduled_action"):
+                action = updated["scheduled_action"]
+                limits = updated["requested_limits"]
+                self.message = (
+                    f"Budget scheduled before epoch {action['apply_before_epoch']}: "
+                    f"epochs {limits['max_epochs']}, calls {limits['max_calls']}, "
+                    f"cost ${float(limits['max_cost_usd']):.2f}"
+                )
+            else:
+                self.message = (
+                    f"Budget updated: epochs {updated['epoch']}/{updated['max_epochs']}, "
+                    f"calls {updated['calls_used']}/{updated['max_calls']}, "
+                    f"cost ${float(updated['cost_used']):.4f}/${float(updated['max_cost_usd']):.2f}"
+                )
 
         def budget_command(event, args: list[str]) -> None:
             if args:
@@ -1596,11 +1625,14 @@ class AriadneTUI:
             str(campaign["campaign_id"]), active_only=True
         )
         pause = "YES" if control.get("pause_requested") else "no"
+        scheduled = self.store.list_scheduled_campaign_actions(
+            str(campaign["campaign_id"]), pending_only=True
+        )
         return (
             f"Calls: {campaign['calls_used']}/{campaign['max_calls']}\n"
             f"Cost: ${float(campaign['cost_used']):.4f}/${float(campaign['max_cost_usd']):.2f}\n"
             f"Epoch: {campaign['epoch']}/{campaign['max_epochs']} | pause pending: {pause}\n"
-            f"Active human instructions: {len(instructions)}\n"
+            f"Scheduled next-epoch controls: {len(scheduled)} | Active instructions: {len(instructions)}\n"
             f"Message: {self._clip(self.message, 120)}"
         )
 

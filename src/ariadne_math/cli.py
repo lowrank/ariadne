@@ -163,7 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
     campaign_recover.add_argument("--by", default="operator")
 
     campaign_budget = campaign_sub.add_parser(
-        "budget", help="Adjust the latest paused campaign's limits without rewriting spent budget"
+        "budget", help="Adjust limits immediately when paused, or schedule them before the next running epoch"
     )
     campaign_budget.add_argument("project", type=Path)
     campaign_budget.add_argument("--max-epochs", type=int)
@@ -538,12 +538,21 @@ def _cmd_campaign(args: argparse.Namespace) -> int:
             adjusted_by=str(args.by),
             reason=str(args.reason),
         )
-        print(
-            f"Adjusted budget for {updated['campaign_id']}: "
-            f"epochs {updated['epoch']}/{updated['max_epochs']}, "
-            f"calls {updated['calls_used']}/{updated['max_calls']}, "
-            f"cost ${float(updated['cost_used']):.4f}/${float(updated['max_cost_usd']):.2f}."
-        )
+        if updated.get("scheduled_action"):
+            limits = updated["requested_limits"]
+            print(
+                f"Scheduled budget action {updated['scheduled_action']['action_id']} for before "
+                f"epoch {updated['scheduled_action']['apply_before_epoch']}: "
+                f"epochs {limits['max_epochs']}, calls {limits['max_calls']}, "
+                f"cost ${float(limits['max_cost_usd']):.2f}."
+            )
+        else:
+            print(
+                f"Adjusted budget for {updated['campaign_id']}: "
+                f"epochs {updated['epoch']}/{updated['max_epochs']}, "
+                f"calls {updated['calls_used']}/{updated['max_calls']}, "
+                f"cost ${float(updated['cost_used']):.4f}/${float(updated['max_cost_usd']):.2f}."
+            )
         return 0
 
     if command == "pause":
@@ -604,28 +613,21 @@ def _cmd_campaign(args: argparse.Namespace) -> int:
 
     if command == "route-status":
         campaign_id = str(campaign["campaign_id"])
-        route = store.get_route(args.route)
-        if str(route["campaign_id"]) != campaign_id:
-            raise ValueError(
-                f"Route {args.route} belongs to {route['campaign_id']}, not latest campaign {campaign_id}"
-            )
-        store.update_route(args.route, status=args.status)
-        store.add_decision(
+        result = store.set_human_route_status(
             campaign_id=campaign_id,
-            epoch=int(campaign["epoch"]),
-            kind="HUMAN_ROUTE_STATUS",
-            available={"route": route},
-            selected={"route_id": args.route, "status": args.status, "by": args.by},
+            route_id=args.route,
+            status=args.status,
+            requested_by=str(args.by),
             rationale=args.note,
-            expected_event=(
-                "Further bounded work under explicit human direction"
-                if args.status == RouteStatus.ACTIVE
-                else "No new work on this route until another explicit decision"
-            ),
-            stop_condition="Human changes the route status or the route reaches a terminal mathematical event",
-            cost_cap=0.0,
         )
-        print(f"Route {args.route} set to {args.status}")
+        if result["application"] == "NEXT_EPOCH":
+            action = result["scheduled_action"]
+            print(
+                f"Scheduled route {args.route} -> {args.status} as {action['action_id']} "
+                f"before epoch {action['apply_before_epoch']}."
+            )
+        else:
+            print(f"Route {args.route} set to {args.status}")
         return 0
 
     config = load_config(args.config)

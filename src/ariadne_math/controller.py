@@ -156,9 +156,8 @@ class CampaignController:
 
         self.reporter.emit(
             "human_controls",
-            "To intervene from another terminal: `ariadne campaign pause PROJECT`, then "
-            "`ariadne campaign budget PROJECT --max-cost-usd AMOUNT --reason TEXT`, then "
-            "`ariadne campaign resume PROJECT --config CONFIG`. A pause is honored at the next safe checkpoint.",
+            "To intervene from another terminal: `ariadne campaign budget PROJECT --max-cost-usd AMOUNT --reason TEXT` "
+            "takes effect before the next epoch; `ariadne campaign pause PROJECT` remains available for a safe stop.",
         )
         active_instructions = self.store.list_human_instructions(
             campaign_id, active_only=True
@@ -180,7 +179,34 @@ class CampaignController:
                 terminal_status = CampaignStatus.PAUSED_HUMAN
 
             if terminal_status is None:
-                for epoch in range(start_epoch, max_epochs + 1):
+                for epoch in range(start_epoch, 1_000_001):
+                    if self._pause_if_requested(campaign_id, checkpoint=f"before epoch {epoch}"):
+                        terminal_status = CampaignStatus.PAUSED_HUMAN
+                        break
+                    applied_actions = self.store.apply_scheduled_campaign_actions(campaign_id)
+                    for action in applied_actions:
+                        outcome = action["outcome"]
+                        if action["status"] == "APPLIED":
+                            self.reporter.emit(
+                                "scheduled_control_applied",
+                                f"Applied {action['kind']} control before epoch {epoch}.",
+                                epoch=epoch,
+                                action_id=action["action_id"],
+                                kind=action["kind"],
+                                outcome=outcome,
+                            )
+                        else:
+                            self.reporter.emit(
+                                "scheduled_control_rejected",
+                                f"Could not apply {action['kind']} control before epoch {epoch}: "
+                                f"{outcome.get('error', 'unknown validation error')}",
+                                epoch=epoch,
+                                action_id=action["action_id"],
+                                kind=action["kind"],
+                                outcome=outcome,
+                            )
+                    boundary_budget = self.store.get_campaign(campaign_id)
+                    max_epochs = int(boundary_budget["max_epochs"])
                     if not self.store.budget_available(campaign_id):
                         terminal_status = CampaignStatus.BUDGET_EXHAUSTED
                         self.reporter.emit(
@@ -189,10 +215,8 @@ class CampaignController:
                             epoch=epoch,
                         )
                         break
-                    if self._pause_if_requested(campaign_id, checkpoint=f"before epoch {epoch}"):
-                        terminal_status = CampaignStatus.PAUSED_HUMAN
+                    if epoch > max_epochs:
                         break
-
                     self.store.update_campaign(campaign_id, epoch=epoch)
                     active_routes = self.store.list_routes(campaign_id, active_only=True)
                     self.reporter.emit(
