@@ -1351,6 +1351,18 @@ class ModeSetupTuiTests(unittest.TestCase):
         self.assertEqual(tui._status_indicator("FAILED"), "×")
         self.assertEqual(tui._status_indicator("PAUSED_HUMAN"), "Ⅱ")
         self.assertEqual(tui._status_indicator("BUDGET_EXHAUSTED"), "!")
+        self.assertIn("! blocked/budget", tui._footer_text())
+        self.assertIn("Ⅱ paused", tui._footer_text())
+        line = "◐ offline-1 → Direct route"
+        phase_zero = tui._active_shimmer_fragments(line, phase=0)
+        phase_later = tui._active_shimmer_fragments(line, phase=4)
+        self.assertEqual("".join(fragment for _, fragment in phase_zero), line)
+        self.assertGreater(len({style for style, _ in phase_zero}), 1)
+        self.assertNotEqual(phase_zero, phase_later)
+        selected = tui._active_shimmer_fragments(line, selected=True, phase=0)
+        self.assertTrue(
+            all(style.startswith("class:panel-selected-wave-") for style, _ in selected)
+        )
 
     def test_partial_result_claim_is_retained_and_browsable_as_an_artifact(self) -> None:
         config_path = self._config("offline_only", offline=1)

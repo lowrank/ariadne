@@ -282,13 +282,14 @@ class AriadneTUI:
                 def get_line(line_no: int):
                     line = document.lines[line_no]
                     upper = line.upper()
-                    if line.startswith("> "):
-                        return [("class:panel-selected", line)]
+                    selected = line.startswith("> ")
                     marker = line.removeprefix("> ").lstrip()[:1]
                     if marker == "×" or any(token in upper for token in ("FAILED", "ERROR", "CRASHED", "EXCEPTION")):
                         return [("class:panel-failure", line)]
                     if marker in {"◐", "◓", "◑", "◒", "○"} or any(token in upper for token in ("RUNNING", "ACTIVE", "QUEUED", "PENDING")):
-                        return [("class:panel-active", line)]
+                        return AriadneTUI._active_shimmer_fragments(line, selected=selected)
+                    if selected:
+                        return [("class:panel-selected", line)]
                     if marker == "✓" or any(token in upper for token in ("COMPLETED", "VERIFIED", "PROVEN", "SUCCEEDED")):
                         return [("class:panel-success", line)]
                     if any(token in upper for token in ("PAUSED", "NEEDS_HUMAN", "WARNING")):
@@ -1206,7 +1207,17 @@ class AriadneTUI:
                 "footer": "reverse",
                 # Codex-like semantic terminal palette.
                 "panel-selected": "bold fg:#ffffff bg:#243447",
-                "panel-active": "fg:#8ca6bf",
+                "panel-active": "fg:#8b929a",
+                "panel-active-wave-0": "fg:#62676d",
+                "panel-active-wave-1": "fg:#747a81",
+                "panel-active-wave-2": "fg:#899099",
+                "panel-active-wave-3": "fg:#a2aab3",
+                "panel-active-wave-4": "fg:#c6cdd5",
+                "panel-selected-wave-0": "fg:#7d858e bg:#243447",
+                "panel-selected-wave-1": "fg:#929aa4 bg:#243447",
+                "panel-selected-wave-2": "fg:#aab2bb bg:#243447",
+                "panel-selected-wave-3": "fg:#c3cad1 bg:#243447",
+                "panel-selected-wave-4": "fg:#f0f3f5 bg:#243447",
                 "panel-success": "fg:#10a37f",
                 "panel-warning": "fg:#f5c242",
                 "panel-failure": "fg:#ff8a8a",
@@ -1386,10 +1397,32 @@ class AriadneTUI:
         return text if len(text) <= limit else text[: limit - 1] + "…"
 
     @staticmethod
+    def _active_shimmer_fragments(
+        line: str, *, selected: bool = False, phase: int | None = None
+    ) -> list[tuple[str, str]]:
+        """Render a low-key grayscale pulse that visibly travels left to right."""
+        if not line:
+            return []
+        phase = int(time.monotonic() * 3) if phase is None else phase
+        cycle = 18
+        chunk_width = 3
+        fragments: list[tuple[str, str]] = []
+        prefix = "class:panel-selected-wave-" if selected else "class:panel-active-wave-"
+        for offset in range(0, len(line), chunk_width):
+            position = offset // chunk_width
+            distance = abs(((position - phase + cycle // 2) % cycle) - cycle // 2)
+            brightness = max(0, 4 - distance)
+            fragments.append((prefix + str(brightness), line[offset: offset + chunk_width]))
+        return fragments
+
+    @staticmethod
     def _status_indicator(status: Any) -> str:
         normalized = str(status or "").upper()
         if normalized in {"RUNNING", "ACTIVE"}:
-            return ("◐", "◓", "◑", "◒")[int(time.monotonic() * 4) % 4]
+            # Panel data is refreshed at roughly one-second intervals. A
+            # non-multiple of four prevents every refresh from landing on the
+            # same spinner frame, and forces the shimmer lexer to redraw.
+            return ("◐", "◓", "◑", "◒")[int(time.monotonic() * 3) % 4]
         if normalized in {"QUEUED", "PENDING", "PROPOSED"}:
             return "○"
         if normalized in {"COMPLETED", "SUCCEEDED", "VERIFIED", "PROVEN", "COMPLETE_PROOF_CANDIDATE"}:
@@ -2003,8 +2036,10 @@ class AriadneTUI:
                 else ""
             )
             status = f"Setup running: {role}{elapsed}"
+        legend = "◐ work  ○ queued  ✓ done  × failed  Ⅱ paused  ! blocked/budget"
         return (
-            f" {status} "
+            f" {legend} "
+            f"• {status} "
             f"• Folder: {self.project_root.name} "
             f"• Model: {model}/{strength} "
             "• Chat for instructions • Type / for exact commands • Enter submit • Ctrl-C quit "
