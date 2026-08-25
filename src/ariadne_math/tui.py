@@ -1305,7 +1305,9 @@ class AriadneTUI:
             key_bindings=kb,
             full_screen=True,
             mouse_support=True,
-            refresh_interval=1.0,
+            # This redraw clock drives only the in-memory visual shimmer.
+            # Store polling remains on the one-second panel-refresh thread.
+            refresh_interval=0.125,
             style=style,
         )
         self._app = app
@@ -1403,9 +1405,9 @@ class AriadneTUI:
         """Render a low-key grayscale pulse that visibly travels left to right."""
         if not line:
             return []
-        phase = int(time.monotonic() * 3) if phase is None else phase
-        cycle = 18
-        chunk_width = 3
+        phase = int(time.monotonic() * 8) if phase is None else phase
+        cycle = 24
+        chunk_width = 2
         fragments: list[tuple[str, str]] = []
         prefix = "class:panel-selected-wave-" if selected else "class:panel-active-wave-"
         for offset in range(0, len(line), chunk_width):

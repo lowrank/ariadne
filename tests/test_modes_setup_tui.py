@@ -1529,6 +1529,7 @@ class ModeSetupTuiTests(unittest.TestCase):
             tui = AriadneTUI(self.root, config_path)
             tui.run()
         self.assertIsNotNone(tui._app)
+        self.assertEqual(tui._app.refresh_interval, 0.125)
 
     def test_setup_document_type_matches_each_offline_mode(self) -> None:
         for mode, filename in (
